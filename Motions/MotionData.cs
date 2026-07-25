@@ -13,6 +13,11 @@ namespace Motions;
 /// </summary>
 public static class MotionData
 {
+    // --- Bundles from Dashboard -------------------------------------------
+
+    public static readonly Dictionary<string, AssetBundle> dashboardAssets = new();
+    public static readonly Dictionary<string, GameObject> createdDashboardAssets = new();
+
     // --- Bundles from ScreenEffect -------------------------------------------
 
     public static readonly Dictionary<string,AssetBundle> screenBorderAssets = new();
@@ -151,6 +156,26 @@ public static class MotionData
         return null;
     }
 
+    public static GameObject FindPrefabAssetDashboard(string bundleName)
+    {
+        if (!dashboardAssets.TryGetValue(bundleName, out var bundle))
+            return null;
+
+            foreach (var assetName in bundle.AllAssetNames())
+            {
+                if (!assetName.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                Logger.LogWarning($"Loading prefab {assetName}");
+
+                var asset = bundle.LoadAsset(assetName, Il2CppType.Of<GameObject>());
+                if (asset != null)
+                    return asset.Cast<GameObject>();
+            }
+
+        return null;
+    }
+
     public static GameObject FindPrefabAssetBuff(BUFF_UNIQUE_KEYWORD keyword)
     {
         if (!LoadedBuffAssets.TryGetValue(keyword, out var bundles))
@@ -252,11 +277,18 @@ public static class MotionData
             Logger.LogWarning($"Unloading buff bundle {bundle.name}");
             bundle.Unload(false);
         }
+        foreach (var bundle in dashboardAssets.Values)
+        {
+            if (bundle == null) continue;
+            Logger.LogWarning($"Unloading buff bundle {bundle.name}");
+            bundle.Unload(false);
+        }
         Logger.LogWarning("Unloading and clearing all custom motions and bundles.");
         LoadedAssets.Clear();
         ScreenBorderPatches.Unload();
         screenBorderAssets.Clear();
         LoadedBuffAssets.Clear();
+        dashboardAssets.Clear();
         AppearanceVFXCache.Clear();
         AppearanceVFXPrefabs.Clear();
         CustomMotionDefinitions.Clear();

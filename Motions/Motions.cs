@@ -48,6 +48,21 @@ public class Motions
                     // directory custom_motions:
                     foreach (var charDir in Directory.GetDirectories(motionsRoot))
                     {
+                            if (charDir.Contains("DASHBOARD"))
+                            {
+                                foreach (var bundlePath in Directory.GetFiles(charDir, "*.bundle", SearchOption.AllDirectories))
+                                {
+                                    var bundle = AssetBundle.LoadFromFile(bundlePath, 0);
+                                    string assetName = bundle.GetName();
+                                    if (bundle == null)
+                                        continue;
+
+                                    if (!MotionData.dashboardAssets.ContainsKey(assetName))
+                                        MotionData.dashboardAssets.Add(assetName, bundle);
+                                    Logger.LogWarning($"Loaded bundle {bundle.name} for dashboard");
+                                }
+                                continue;
+                            }
                             if (charDir.Contains("CUSTOMSCREEN"))
                             {
                                 foreach (var bundlePath in Directory.GetFiles(charDir, "*.bundle", SearchOption.AllDirectories))
@@ -209,6 +224,7 @@ public class Motions
         string appearanceID = unitView?._unitModel?.GetAppearanceID() ?? __instance.charInfo.appearanceID;
         Logger.LogInfo($"CharacterAppearance.Initialize called for: {appearanceID} (Source: {(unitView != null ? "Model" : "CharInfo")})");
         CueExtractor.EagerCacheBuffEffects();
+        CueExtractor.EagerCacheDashEffects();
         bool hasCustomJSON = MotionData.HasDefinition(appearanceID);
         bool hasCustomBundle = MotionData.HasBundle(appearanceID);
 

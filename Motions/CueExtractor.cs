@@ -36,6 +36,34 @@ public static class CueExtractor
         return instance;
     }
 
+    public static void EagerCacheDashEffects()
+    {
+        foreach (var asset in MotionData.dashboardAssets)
+        {
+            string bundleName = asset.Key;
+
+            if (MotionData.createdDashboardAssets.ContainsKey(bundleName))
+                continue;
+
+            Logger.LogInfo($"Caching {bundleName}");
+
+            var obj = MotionData.FindPrefabAssetDashboard(bundleName);
+            if (obj == null)
+            {
+                Logger.LogError($"Couldn't find prefab for {bundleName}");
+                continue;
+            }
+
+            var persistentPrefab = UnityEngine.Object.Instantiate(obj);
+            persistentPrefab.name = obj.name;
+            persistentPrefab.SetActive(false);
+
+            UnityEngine.Object.DontDestroyOnLoad(persistentPrefab);
+
+            MotionData.createdDashboardAssets.Add(bundleName, persistentPrefab);
+        }
+    }
+
     public static void EagerCacheBuffEffects()
     {
         foreach (var pair in MotionData.LoadedBuffAssets)

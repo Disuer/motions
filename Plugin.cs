@@ -3,11 +3,13 @@ using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
 using Il2CppSystem.IO;
+using ModularSkillScripts;
 using Motions;
 
 namespace Motions;
 
 [BepInPlugin(GUID, NAME, VERSION)]
+[BepInDependency("GlitchGames.ModularSkillScripts")]
 public class Plugin : BasePlugin
 {
     public const string GUID = $"{AUTHOR}.{NAME}";
@@ -34,5 +36,6 @@ public class Plugin : BasePlugin
         harmony.PatchAll(typeof(BuffPatches));
         harmony.PatchAll(typeof(CharVFXParse));
         harmony.PatchAll(typeof(ScreenBorderPatches));
+        MainClass.consequenceDict["customslotvfx"] = new DashboardInstantiation();
     }
 }
