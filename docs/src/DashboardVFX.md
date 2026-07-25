@@ -10,12 +10,19 @@ Next, use the provided modular consequence in order to summon your custom dashbo
 
 The parameters are:
 `var_1`: Target (see Modular's Mult-Targeting)
+
 `var_2`: slotNum | 0 for first slot, 1 for 2nd, etc.
+
 `var_3`: active? | `true` or `false`
+
 `var_4`: vfxName | name of the bundle in the `DASHBOARD` folder (i.e `flowy.bundle` -> `flowy`
+
 `opt_1`: topSlot | `"top` or `"bottom"`, defaults to bottom
+
 `opt_2`: X Position | How much to offset the X position of your VFX (relative to the slot)
+
 `opt_3`: Y Position | How much to offset the Y position of your VFX (relative to the slot)
+
 `opt_4`: Y Position | How much to offset the Z position of your VFX (relative to the slot)
 
 Reminder, `opt` parameters may be left blank. Here's an example use case of spawning custom VFX on the dashboard.
