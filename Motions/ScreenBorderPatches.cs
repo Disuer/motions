@@ -35,7 +35,7 @@ namespace Motions
 
         [HarmonyPatch(typeof(BattleObjectManager), nameof(BattleObjectManager.OnRoundStart_Model))]
         [HarmonyPostfix]
-        public static void TriggerBuffVFX(BattleObjectManager __instance)
+        public static void TriggerScreen(BattleObjectManager __instance)
         {
             if (MotionData.screenBorderAssets.ContainsKey(bundlename) && init == false)
             {
@@ -53,27 +53,47 @@ namespace Motions
 
         private static void CreateOverlayCanvas()
         {
-            Logger.LogWarning("Creating canvas.");
-            GameObject canvasObj = new GameObject("VignetteCanvas");
-            UnityEngine.Object.DontDestroyOnLoad(canvasObj);
+            Logger.LogWarning("Creating overlay image under PerspectiveUI.");
 
-            overlayCanvas = canvasObj.AddComponent<Canvas>();
-            overlayCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            overlayCanvas.sortingOrder = 999;
+            // 1. Try to find PerspectiveUI directly in the scene hierarchy
+            GameObject targetUIObj = GameObject.Find("PerspectiveUI") ?? GameObject.Find("SafeArea");
 
-            CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            GameObject imageObj = new GameObject("Motions_ScreenBorder");
 
-            GameObject imageObj = new GameObject("VignetteImage");
-            imageObj.transform.SetParent(canvasObj.transform, false);
+            if (targetUIObj != null)
+            {
+                Logger.LogInfo($"Found target UI: {targetUIObj.name}. Parenting border image.");
+                imageObj.transform.SetParent(targetUIObj.transform, false);
+
+                // Renders behind all other UI components inside PerspectiveUI
+                imageObj.transform.SetAsFirstSibling();
+            }
+            else
+            {
+                Logger.LogWarning("PerspectiveUI not found! Creating fallback canvas.");
+                GameObject canvasObj = new GameObject("Motions_ScreenBorder");
+                UnityEngine.Object.DontDestroyOnLoad(canvasObj);
+
+                overlayCanvas = canvasObj.AddComponent<Canvas>();
+                overlayCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                overlayCanvas.sortingOrder = -1; // Sit behind standard overlay canvasses
+
+                CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+
+                imageObj.transform.SetParent(canvasObj.transform, false);
+            }
 
             overlayImage = imageObj.AddComponent<Image>();
             overlayImage.material = loadedMaterial;
+
+            overlayImage.raycastTarget = false; // don't take inputs
 
             RectTransform rect = overlayImage.rectTransform;
             rect.anchorMin = Vector2.zero;
             rect.anchorMax = Vector2.one;
             rect.sizeDelta = Vector2.zero;
+
             init = true;
         }
         public static void SetIntensity(float intensity)
