@@ -8,4 +8,4 @@ The naming of this bundle is important, as you will need to use the bundle's nam
 
 In order to activate this effect, go to your encounter's `stageScriptList`, and add `ScreenBorder_(Bundlename)`, which will then prompt Motions to find the bundle and load it. An example is linked below.
 
-[](assets/ScreenBorderExample.png)
+![](assets/ScreenBorderExample.png)
