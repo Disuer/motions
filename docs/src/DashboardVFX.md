@@ -25,7 +25,7 @@ The parameters are:
 
 `opt_4`: Y Position | How much to offset the Z position of your VFX (relative to the slot)
 
-Reminder, `opt` parameters may be left blank. Here's an example use case of spawning custom VFX on the dashboard.
+Reminder, `opt` parameters may be left blank. Here's an example use case of spawning custom VFX on the dashboard. (FakePower timing is reccomended)
 
 `"Modular/TIMING:FakePower/customslotvfx(Self,0,true,indexflowy,bottom,0,4,1)"`
 
