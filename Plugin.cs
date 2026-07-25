@@ -3,6 +3,7 @@ using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
 using Il2CppSystem.IO;
+using Motions;
 
 namespace Motions;
 
@@ -32,5 +33,6 @@ public class Plugin : BasePlugin
         Motions.Setup(harmony);
         harmony.PatchAll(typeof(BuffPatches));
         harmony.PatchAll(typeof(CharVFXParse));
+        harmony.PatchAll(typeof(ScreenBorderPatches));
     }
 }

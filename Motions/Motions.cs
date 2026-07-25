@@ -48,6 +48,22 @@ public class Motions
                     // directory custom_motions:
                     foreach (var charDir in Directory.GetDirectories(motionsRoot))
                     {
+                            if (charDir.Contains("CUSTOMSCREEN"))
+                            {
+                                foreach (var bundlePath in Directory.GetFiles(charDir, "*.bundle", SearchOption.AllDirectories))
+                                {
+                                    var bundle = AssetBundle.LoadFromFile(bundlePath, 0);
+                                    string assetName = bundle.GetName();
+                                    assetName = assetName.GetBefore(".bundle");
+                                    if (bundle == null)
+                                        continue;
+
+                                    if (!MotionData.screenBorderAssets.ContainsKey(assetName))
+                                        MotionData.screenBorderAssets.Add(assetName, bundle);
+                                    Logger.LogWarning($"Loaded bundle {bundle.name} for screeneffect");
+                                }
+                                continue;
+                            }
                             if (charDir.Contains("MOTIONBUFF_"))
                             {
                                 string buffId = Path.GetFileName(charDir).Remove(0, 11);
@@ -74,9 +90,6 @@ public class Motions
                                 }
                                 continue;
                             }
-
-                
-
                         string appearanceID = Path.GetFileName(charDir);
                         Logger.LogWarning($"Discovered directory for ID: [{appearanceID}] at path: {charDir}");
                             // Discover CharacterVFX JSON definitions

@@ -13,6 +13,10 @@ namespace Motions;
 /// </summary>
 public static class MotionData
 {
+    // --- Bundles from ScreenEffect -------------------------------------------
+
+    public static readonly Dictionary<string,AssetBundle> screenBorderAssets = new();
+
     // --- Bundles from BuffEffect -------------------------------------------
 
     public static readonly Dictionary<BUFF_UNIQUE_KEYWORD, List<AssetBundle>> LoadedBuffAssets = new();
@@ -125,7 +129,6 @@ public static class MotionData
     public static GameObject FindPrefabAsset(string appearanceID, string clipName)
     {
         if (!LoadedAssets.ContainsKey(appearanceID)) return null;
-
         string target = clipName.ToLower();
 
         foreach (var bundle in LoadedAssets[appearanceID])
@@ -155,6 +158,7 @@ public static class MotionData
 
         foreach (var bundle in bundles)
         {
+          
             foreach (var assetName in bundle.AllAssetNames())
             {
                 if (!assetName.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
@@ -242,8 +246,16 @@ public static class MotionData
                 bundle.Unload(false);
             }
         }
+        foreach (var bundle in screenBorderAssets.Values)
+        {
+            if (bundle == null) continue;
+            Logger.LogWarning($"Unloading buff bundle {bundle.name}");
+            bundle.Unload(false);
+        }
         Logger.LogWarning("Unloading and clearing all custom motions and bundles.");
         LoadedAssets.Clear();
+        ScreenBorderPatches.Unload();
+        screenBorderAssets.Clear();
         LoadedBuffAssets.Clear();
         AppearanceVFXCache.Clear();
         AppearanceVFXPrefabs.Clear();
