@@ -7,6 +7,7 @@
   - [SFX](SFX.md)
   - [VFX](VFX.md)
   - [ScreenBorder - VFX](Screenborder.md)
+  - [Dashboard - VFX](DashboardVFX.md)
 - [Reference](Reference.md)
   - [Mod Layout](ModLayout.md)
   - [Bundles](Bundles.md)
