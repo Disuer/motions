@@ -1,5 +1,6 @@
 using System;
 using Il2CppInterop.Runtime;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Il2CppSystem.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Playables;
@@ -121,6 +122,39 @@ public static class MotionInjector
     }
 
     /// <summary>
+    /// Makes sure the sandbox renderer is one of the afterimage trail's source renderers. The trail
+    /// bakes its mesh from that list and contributes nothing for a disabled renderer, so keeping the
+    /// originals alongside the sandbox lets custom and vanilla motions each trail correctly without
+    /// swapping anything per motion. Idempotent, and re-applies itself if the game rebuilds the list.
+    /// </summary>
+    private static void RegisterTrailSource(SD.CharacterAppearance character, SidecarSyncBehavior sync)
+    {
+        try
+        {
+            // Resolved on use, not in AttachSidecar: the trail component initializes after we attach.
+            var trail = character.GetComponentInChildren<CharacterAppearanceTrail>(true);
+            if (trail == null) return;
+
+            var sources = trail._sourceRenderers;
+            int count = sources?.Length ?? 0;
+
+            for (int i = 0; i < count; i++)
+                if (sources[i] == sync.SandboxRenderer) return;
+
+            var merged = new Il2CppReferenceArray<SpriteRenderer>(count + 1);
+            for (int i = 0; i < count; i++)
+                merged[i] = sources[i];
+            merged[count] = sync.SandboxRenderer;
+
+            trail._sourceRenderers = merged;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError($"[Trail] source registration failed: {ex}");
+        }
+    }
+
+    /// <summary>
     /// Plays the custom motion on the sidecar: assigns sound/VFX cues, starts the slave director, and syncs.
     /// </summary>
     public static void PlayCustomMotion(SD.CharacterAppearance appearance, MOTION_DETAIL motiondetail, int index)
@@ -138,6 +172,8 @@ public static class MotionInjector
 
         var syncScript = sandboxTransform?.GetComponent<SidecarSyncBehavior>();
         if (syncScript == null) return;
+
+        RegisterTrailSource(appearance, syncScript);
 
         var key = MotionKey.Create(appearanceID, motiondetail, index);
 

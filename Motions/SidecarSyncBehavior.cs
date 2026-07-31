@@ -29,6 +29,7 @@ public class SidecarSyncBehavior : MonoBehaviour
     public bool IsModdedSkillActive = false;
     public bool ShouldSync = true;
 
+
     private Transform GetFirstTargetTransform()
     {
         try
@@ -84,6 +85,9 @@ public class SidecarSyncBehavior : MonoBehaviour
     {
         if (IsModdedSkillActive && OriginalRenderer != null && SandboxRenderer != null)
         {
+            // share the original's material and every material effect follows.
+            SandboxRenderer.sharedMaterial = OriginalRenderer.sharedMaterial;
+
             var color = SandboxRenderer.color;
             color.a = OriginalRenderer.color.a;
             SandboxRenderer.color = color;
