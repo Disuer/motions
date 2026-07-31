@@ -52,8 +52,9 @@
             <HintPath>%(Identity)</HintPath>
             <Private>false</Private>
         </Reference>
-        <Reference Include="ModularSkillScripts">
-          <HintPath>..\..\..\Desktop\LIMBUS\BepInEx\plugins\ModularSkillScripts.dll</HintPath>
+        <Reference Include="$(LimbusCompanyFolder)\BepInEx\plugins\ModularSkillScripts.dll">
+            <HintPath>%(Identity)</HintPath>
+            <Private>false</Private>
         </Reference>
     </ItemGroup>
 
