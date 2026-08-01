@@ -120,8 +120,14 @@ async function loadMotion(handle: FileSystemDirectoryHandle, folder: string): Pr
  * hitCheckers marks where a coin may hand off, and defaults to 15% of the coin when absent - so
  * a two second animation stops after 0.3s. It is the most common cause of "my attack gets cut
  * short", and the file is sitting right there, so it is worth reading. Read-only, always.
+ *
+ * The empty-coins case is deliberately not a warning: with no coins at all, the plugin
+ * synthesises one and, for a sprite motion, hands off at the very end on its own
+ * (TimelineBuilder.cs:345-374) - the 15% default only fires once a coin exists and that coin's
+ * own hitCheckers is missing or empty (TimelineBuilder.cs:74-85). hitCheckers lives on each
+ * coin, not on the skill root, so a coins-less file has nothing to check here.
  */
-function checkSkillJson(text: string | null, name: string): string | null {
+export function checkSkillJson(text: string | null, name: string): string | null {
   if (text === null) return null
   let data: any
   try {
@@ -130,13 +136,12 @@ function checkSkillJson(text: string | null, name: string): string | null {
     return `${name} is not valid JSON, so the game will ignore it.`
   }
   const coins: any[] = Array.isArray(data?.coins) ? data.coins : []
-  const missing = coins.length === 0
-    ? !Array.isArray(data?.hitCheckers) || data.hitCheckers.length === 0
-    : coins.some((c) => !Array.isArray(c?.hitCheckers) || c.hitCheckers.length === 0)
+  const badIndex = coins.findIndex((c) => !Array.isArray(c?.hitCheckers) || c.hitCheckers.length === 0)
 
-  if (missing) {
-    return `${name} has a coin with no hitCheckers. That defaults to 15% of the coin, ` +
-           `which cuts the animation off early. Add "hitCheckers": [{ "time": 1.0, "isNextMotionCoinDelay": 0.0 }].`
+  if (badIndex !== -1) {
+    return `${name} coin ${badIndex} has no hitCheckers. That defaults to 15% of the coin, ` +
+           `which cuts the animation off early. Add "hitCheckers": [{ "time": 1.0, "isNextMotionCoinDelay": 0.0 }] ` +
+           `- unlike animation.json, time here is a fraction of totalDuration, so 1.0 means the end.`
   }
   return null
 }
