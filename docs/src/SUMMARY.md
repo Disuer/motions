@@ -3,6 +3,8 @@
 - [Custom Motions](README.md)
   - [Setting Up](SettingUp.md)
   - [Creating Your First Motion](YourFirstMotion.md)
+  - [Sprite Motions - no Unity](SpriteMotions.md)
+  - [New Appearances - no Unity](NewAppearances.md)
   - [Attacks](Attacks.md)
   - [SFX](SFX.md)
   - [VFX](VFX.md)

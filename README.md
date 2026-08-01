@@ -51,11 +51,17 @@ Then just launch the game to test.
 | `Motions/CueExtractor.cs` | Extracts sound/VFX cues from bundle timelines; timeline caching |
 | `Motions/SidecarSyncBehavior.cs` | Runtime behaviour on the sidecar: syncs with the master director, fires cues |
 | `Motions/TimelineBuilder.cs` | Builds Unity Timeline assets |
+| `Motions/SpriteMotionSpec.cs` | Pure parsing/maths for bundle-free sprite motions (no Unity types, unit-tested) |
+| `Motions/SpriteMotionLoader.cs` | Builds sprites and sound cues from a `motions/` folder |
+| `Motions/AppearanceRegistry.cs` | Reads `appearance.json`; owns the `!motions_` ID prefix |
+| `Motions/AppearanceFactory.cs` | Builds a new `CharacterAppearance` by cloning a vanilla donor |
 | `Motions/Fmod.cs` | FMOD audio helpers |
 | `Motions/Types.cs` | Shared types |
 
 ## Contributing
 
 - Want to **make motions** (no coding)? Start with the [docs](https://league-of-nine.github.io/motions) - improvements to the guide are welcome too, sources are in `docs/src`.
+- Making a **sprite-only motion**? You don't need Unity - see [Sprite Motions](https://league-of-nine.github.io/motions/SpriteMotions.html).
+- Adding a **new character appearance**? Also no Unity - see [New Appearances](https://league-of-nine.github.io/motions/NewAppearances.html).
 - Want to hack on the **plugin**? Build it as above, then look at `Motions/Motions.cs` - every feature starts from a Harmony patch there.
 - Open an issue or PR on GitHub; small, focused PRs are easiest to review.
