@@ -78,19 +78,31 @@ export default function App() {
 
   async function alignAll(axis: 'xy' | 'x') {
     const motion = character!.motions[tab]
+    // Each frame's decode is caught individually, so one corrupt or missing PNG leaves that
+    // frame unchanged instead of rejecting the whole Promise.all and silently no-oping the
+    // entire align — partial alignment is more useful than none.
+    const failed: string[] = []
     const next = await Promise.all(
       spec.frames.map(async (f) => {
         const asset = motion.assets.get(f.sprite)
         if (!asset) return f
-        const b = await boundsOf(asset.url, asset.width, asset.height)
-        if (!b) return f
-        return alignFrame(f, b, asset.width, asset.height, spec.ppu, axis)
+        try {
+          const b = await boundsOf(asset.url, asset.width, asset.height)
+          if (!b) return f
+          return alignFrame(f, b, asset.width, asset.height, spec.ppu, axis)
+        } catch {
+          failed.push(f.sprite)
+          return f
+        }
       }),
     )
     editSpec((s) => {
       s.frames = next
       return s
     })
+    if (failed.length > 0) {
+      setProblem(`Could not read ${failed.join(', ')} to align it/them — left unchanged. Re-export the file and try again.`)
+    }
   }
 
   // Selection decides the target: a frame selected moves that frame, nothing selected moves
@@ -101,7 +113,11 @@ export default function App() {
       const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0
       const dy = e.key === 'ArrowUp' ? step : e.key === 'ArrowDown' ? -step : 0
       if (dx === 0 && dy === 0) return
-      if (document.activeElement?.tagName === 'INPUT') return  // let number fields do their own thing
+      // Let form controls that own their own arrow-key behaviour handle it themselves - a select
+      // (e.g. the filter dropdown) cycles its options on ArrowUp/Down, and without this guard
+      // that gets suppressed by preventDefault() below while a frame is silently nudged anyway.
+      const editable = ['INPUT', 'SELECT', 'TEXTAREA']
+      if (editable.includes(document.activeElement?.tagName ?? '')) return
       e.preventDefault()
 
       if (selected === null) nudgeAll(dx, dy)
