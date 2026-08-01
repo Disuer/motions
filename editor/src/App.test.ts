@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { alignFrame, nudgeAllFrames } from './App'
+import { alignFrame, nudgeAllFrames, sortFramesByTime, spaceEvenlyFrames } from './App'
 import { Frame } from './spec'
 
 function frame(sprite: string, offset: [number, number], scale = 1): Frame {
@@ -62,5 +62,73 @@ describe('alignFrame', () => {
     expect(out.sprite).toBe('a.png')
     expect(out.scale).toBe(1)
     expect(out.t).toBe(0)
+  })
+})
+
+describe('spaceEvenlyFrames', () => {
+  it('places frame i at i/fps and sets duration to count/fps', () => {
+    const frames = [frame('a.png', [0, 0]), frame('b.png', [0, 0]), frame('c.png', [0, 0])]
+    const out = spaceEvenlyFrames(frames, 12)
+    expect(out.frames.map((f) => f.t)).toEqual([0, 1 / 12, 2 / 12])
+    expect(out.duration).toBeCloseTo(3 / 12, 9)
+  })
+
+  it('leaves non-time fields untouched', () => {
+    const frames = [frame('a.png', [0.4, -0.2], 2)]
+    const out = spaceEvenlyFrames(frames, 24)
+    expect(out.frames[0].sprite).toBe('a.png')
+    expect(out.frames[0].offset).toEqual([0.4, -0.2])
+    expect(out.frames[0].scale).toBe(2)
+  })
+
+  it('handles a single frame: t 0, duration 1/fps', () => {
+    const out = spaceEvenlyFrames([frame('a.png', [0, 0])], 12)
+    expect(out.frames[0].t).toBe(0)
+    expect(out.duration).toBeCloseTo(1 / 12, 9)
+  })
+
+  it('handles an empty frame list without throwing', () => {
+    const out = spaceEvenlyFrames([], 12)
+    expect(out.frames).toEqual([])
+    expect(out.duration).toBe(0)
+  })
+
+  it('does not mutate the input array', () => {
+    const frames = [frame('a.png', [0, 0])]
+    spaceEvenlyFrames(frames, 12)
+    expect(frames[0].t).toBe(0)
+  })
+})
+
+describe('sortFramesByTime', () => {
+  it('sorts scrambled frames into ascending t, keeping each sprite paired with its own t', () => {
+    const frames = [
+      frame('c.png', [0, 0]), // t 0.2, set below
+      frame('a.png', [0, 0]),
+      frame('b.png', [0, 0]),
+    ]
+    frames[0].t = 0.2
+    frames[1].t = 0
+    frames[2].t = 0.1
+    const out = sortFramesByTime(frames)
+    expect(out.map((f) => f.t)).toEqual([0, 0.1, 0.2])
+    // The point of this test: a sort that reorders times but not the sprites that go with
+    // them is the exact bug being guarded against.
+    expect(out.map((f) => f.sprite)).toEqual(['a.png', 'b.png', 'c.png'])
+  })
+
+  it('does not mutate the input array', () => {
+    const frames = [frame('b.png', [0, 0]), frame('a.png', [0, 0])]
+    frames[0].t = 1
+    frames[1].t = 0
+    const out = sortFramesByTime(frames)
+    expect(frames.map((f) => f.sprite)).toEqual(['b.png', 'a.png'])
+    expect(out).not.toBe(frames)
+  })
+
+  it('is a no-op on an already-sorted list', () => {
+    const frames = [frame('a.png', [0, 0]), frame('b.png', [0, 0])]
+    frames[1].t = 0.1
+    expect(sortFramesByTime(frames).map((f) => f.sprite)).toEqual(['a.png', 'b.png'])
   })
 })

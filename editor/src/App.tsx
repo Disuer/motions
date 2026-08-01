@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Canvas from './Canvas'
 import Inspector from './Inspector'
+import Timeline from './Timeline'
 import {
   LoadedCharacter, Mode, ensurePermission, loadCharacter, nameRejection, pickFolder,
   recallFolder, rememberFolder,
 } from './fs'
 import { alignOffset, Bbox, boundsOf } from './png'
-import { AnimationSpec, effectivePpu, Frame } from './spec'
+import { AnimationSpec, effectivePpu, Frame, frameIndexAt } from './spec'
 
 /**
  * Moves every frame by the same amount. Pulled out of the component so it is testable without
@@ -29,6 +30,28 @@ export function alignFrame(f: Frame, b: Bbox, width: number, height: number, ppu
   return { ...f, offset: [x, axis === 'x' ? f.offset[1] : y] }
 }
 
+/**
+ * spec.frames must be in ascending t whenever anything reads it with frameIndexAt — both the
+ * preview and the game walk forward and stop at the first time past t, so an out-of-order array
+ * makes that lookup return the wrong frame. Dragging a marker past its neighbour on the Timeline
+ * is the one thing in the editor that can put frames out of order; this is how it gets undone.
+ */
+export function sortFramesByTime(frames: Frame[]): Frame[] {
+  return [...frames].sort((a, b) => a.t - b.t)
+}
+
+/**
+ * Places frame i at i/fps and sets duration to match, so the whole motion runs at that rate.
+ * Pulled out for the same reason as nudgeAllFrames: "space evenly" is the button that carries
+ * most of this task's value, and the arithmetic deserves a test that doesn't need a browser.
+ */
+export function spaceEvenlyFrames(frames: Frame[], fps: number): { frames: Frame[]; duration: number } {
+  return {
+    frames: frames.map((f, i) => ({ ...f, t: i / fps })),
+    duration: frames.length / fps,
+  }
+}
+
 const SUPPORTED = typeof window !== 'undefined' && 'showDirectoryPicker' in window
 
 export default function App() {
@@ -46,6 +69,8 @@ export default function App() {
   const [specs, setSpecs] = useState<AnimationSpec[]>([])
   const [dirty, setDirty] = useState<Set<number>>(new Set())
   const [selected, setSelected] = useState<number | null>(null)
+  // Preview time in seconds while playing, null when stopped.
+  const [playhead, setPlayhead] = useState<number | null>(null)
 
   useEffect(() => {
     void recallFolder().then(setRecalled)
@@ -56,6 +81,12 @@ export default function App() {
   }, [character])
 
   const spec = specs[tab]
+  // Timeline's pointerup handler is bound once, at the start of a drag, via a raw
+  // window.addEventListener - it does not pick up new closures from the re-renders that happen
+  // mid-drag as onFrameTime updates state. Kept current on every render (not in an effect, which
+  // would lag a tick behind) so onFrameDragEnd below always sees the frame's true final position.
+  const specRef = useRef(spec)
+  specRef.current = spec
 
   function editSpec(patch: (s: AnimationSpec) => AnimationSpec) {
     setSpecs((prev) => prev.map((s, i) => (i === tab ? patch(structuredClone(s)) : s)))
@@ -74,6 +105,34 @@ export default function App() {
       s.frames = nudgeAllFrames(s.frames, dx, dy)
       return s
     })
+  }
+
+  function spaceEvenly(fps: number) {
+    editSpec((s) => {
+      const spaced = spaceEvenlyFrames(s.frames, fps)
+      s.frames = spaced.frames
+      s.duration = spaced.duration
+      return s
+    })
+  }
+
+  /**
+   * Called once a frame drag ends (not during it — see the comment on sortFramesByTime).
+   * Re-sorts and follows the dragged frame to its new index, computed by sorting a local copy of
+   * specRef.current.frames: since sortFramesByTime doesn't clone individual frames, the dragged
+   * frame's object identity survives the sort and indexOf finds where it landed. Reads specRef
+   * rather than the `spec` closure because this function is called from a window listener bound
+   * at the start of the drag, before the moves that actually change frame i's time.
+   */
+  function onFrameDragEnd(i: number) {
+    const current = specRef.current.frames
+    const newIndex = sortFramesByTime(current).indexOf(current[i])
+    editSpec((s) => {
+      s.frames = sortFramesByTime(s.frames)
+      return s
+    })
+    setFrameIndex(newIndex)
+    setSelected((sel) => (sel === i ? newIndex : sel))
   }
 
   async function alignAll(axis: 'xy' | 'x') {
@@ -128,6 +187,24 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [selected, spec, tab])
+
+  // Steps through frames with the same frameIndexAt lookup the runtime uses, rather than
+  // tweening — a blended preview would have authors aligning frames against a lie.
+  useEffect(() => {
+    if (playhead === null || !spec) return
+    let raf = 0
+    const started = performance.now()
+    const tick = (now: number) => {
+      const t = ((now - started) / 1000) % spec.duration
+      setPlayhead(t)
+      setFrameIndex(Math.max(0, frameIndexAt(spec.frames.map((f) => f.t), t)))
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+    // Restarting on every playhead change would reset the clock, so this deliberately
+    // depends only on whether playback is on at all.
+  }, [playhead === null, spec?.duration, tab])
 
   async function open(handle: FileSystemDirectoryHandle, mode: Mode) {
     setProblem(null)
@@ -247,29 +324,47 @@ export default function App() {
             </button>
           </div>
           {spec && (
-            <div className="mt-2 flex h-[520px] rounded border">
-              <div className="flex-1">
-                <Canvas
+            <>
+              <div className="mt-2 flex h-[520px] rounded border">
+                <div className="flex-1">
+                  <Canvas
+                    spec={spec}
+                    assets={character.motions[tab].assets}
+                    index={frameIndex}
+                    onionSkin={onionSkin}
+                    zoom={zoom}
+                    pan={pan}
+                    onPan={setPan}
+                    onDragFrame={(dx, dy) => updateFrame(frameIndex, {
+                      offset: [spec.frames[frameIndex].offset[0] + dx,
+                               spec.frames[frameIndex].offset[1] + dy],
+                    })}
+                  />
+                </div>
+                <Inspector
                   spec={spec}
-                  assets={character.motions[tab].assets}
                   index={frameIndex}
-                  onionSkin={onionSkin}
-                  zoom={zoom}
-                  pan={pan}
-                  onPan={setPan}
-                  onDragFrame={(dx, dy) => updateFrame(frameIndex, {
-                    offset: [spec.frames[frameIndex].offset[0] + dx,
-                             spec.frames[frameIndex].offset[1] + dy],
-                  })}
+                  onFrame={(p) => updateFrame(frameIndex, p)}
+                  onSpec={(p) => editSpec((s) => ({ ...s, ...p }))}
                 />
               </div>
-              <Inspector
+
+              <button onClick={() => setPlayhead(playhead === null ? 0 : null)}
+                      className="mt-2 rounded border px-2 py-0.5 text-xs">
+                {playhead === null ? '▶ play' : '■ stop'}
+              </button>
+
+              <Timeline
                 spec={spec}
                 index={frameIndex}
-                onFrame={(p) => updateFrame(frameIndex, p)}
-                onSpec={(p) => editSpec((s) => ({ ...s, ...p }))}
+                playhead={playhead}
+                onPick={setFrameIndex}
+                onFrameTime={(i, t) => updateFrame(i, { t })}
+                onFrameDragEnd={onFrameDragEnd}
+                onSfxTime={(i, t) => editSpec((s) => { s.sfx[i] = { ...s.sfx[i], t }; return s })}
+                onSpace={spaceEvenly}
               />
-            </div>
+            </>
           )}
         </>
       )}
