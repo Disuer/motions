@@ -3,11 +3,12 @@ import Canvas from './Canvas'
 import Inspector from './Inspector'
 import Timeline from './Timeline'
 import {
-  LoadedCharacter, Mode, ensurePermission, loadCharacter, nameRejection, pickFolder,
-  recallFolder, rememberFolder,
+  DEFAULT_BASE, LoadedCharacter, Mode, ensurePermission, importAssets, loadCharacter,
+  nameRejection, pickFolder, recallFolder, rememberFolder, writeFile,
 } from './fs'
+import { MOTION_NAMES, isSkill } from './motions'
 import { alignOffset, Bbox, boundsOf } from './png'
-import { AnimationSpec, effectivePpu, Frame, frameIndexAt } from './spec'
+import { AnimationSpec, DEFAULT_FPS, effectivePpu, Frame, frameIndexAt, serialiseSpec } from './spec'
 
 /**
  * Moves every frame by the same amount. Pulled out of the component so it is testable without
@@ -64,6 +65,27 @@ export function spaceEvenlyFrames(frames: Frame[], fps: number): { frames: Frame
   }
 }
 
+/**
+ * -1 is not a motion index; it is the marker `dirty` uses for "appearance.json changed" (see the
+ * appearance-base field below). Every loop over `dirty` has to filter it out before indexing
+ * character.motions, or it reads motions[-1]. Pulled out so that guard lives in exactly one place.
+ */
+export function dirtyMotions(dirty: Set<number>): number[] {
+  return [...dirty].filter((i) => i >= 0)
+}
+
+/**
+ * Which files Save is about to write. This is what the confirmation dialog shows the user and,
+ * unchanged, what save() then writes — the last line of defence before anything hits disk, so it
+ * is kept pure and separate from the component so a dialog that silently under-reports (worse
+ * than no dialog at all) has a test that does not need a browser.
+ */
+export function planSave(character: LoadedCharacter, dirty: Set<number>): string[] {
+  const files = dirtyMotions(dirty).map((i) => `motions/${character.motions[i].folder}/animation.json`)
+  if (character.mode === 'appearance') files.push('appearance.json')
+  return files
+}
+
 const SUPPORTED = typeof window !== 'undefined' && 'showDirectoryPicker' in window
 
 export default function App() {
@@ -84,12 +106,57 @@ export default function App() {
   // Preview time in seconds while playing, null when stopped.
   const [playhead, setPlayhead] = useState<number | null>(null)
 
+  const [base, setBase] = useState(DEFAULT_BASE)
+  const [pending, setPending] = useState<string[] | null>(null)   // confirmation list
+  const [saved, setSaved] = useState<string | null>(null)
+  const [newMotion, setNewMotion] = useState('')
+
   useEffect(() => {
     void recallFolder().then(setRecalled)
   }, [])
 
+  useEffect(() => { if (character) setBase(character.appearanceBase) }, [character])
+
+  // Folders loaded so far, in the order specs/dirty currently index by. Updated at the end of the
+  // effect below, so it always holds the order from BEFORE the character that effect is reacting to.
+  const prevMotionsRef = useRef<{ folder: string }[]>([])
+
   useEffect(() => {
-    if (character) setSpecs(character.motions.map((m) => structuredClone(m.spec)))
+    if (!character) return
+    const prevMotions = prevMotionsRef.current
+
+    // importAssets and createMotion both re-read the folder with loadCharacter, which replaces
+    // `character` and, before this fix, reset every spec from disk - silently discarding any
+    // unsaved edit in a tab other than the one just touched. A new motion folder can also sort
+    // in ahead of existing ones, shifting every index after it, so matching by array position
+    // (as an earlier version of this did) can attribute an edit to the wrong folder entirely.
+    // Matching by folder name instead survives both a reorder and a re-read.
+    setSpecs((prevSpecs) =>
+      character.motions.map((m) => {
+        const oldIndex = prevMotions.findIndex((pm) => pm.folder === m.folder)
+        return oldIndex >= 0 && prevSpecs[oldIndex] ? prevSpecs[oldIndex] : structuredClone(m.spec)
+      }),
+    )
+    setDirty((prevDirty) => {
+      const next = new Set<number>()
+      if (prevDirty.has(-1)) next.add(-1)
+      character.motions.forEach((m, newIndex) => {
+        const oldIndex = prevMotions.findIndex((pm) => pm.folder === m.folder)
+        if (oldIndex >= 0 && prevDirty.has(oldIndex)) next.add(newIndex)
+      })
+      return next
+    })
+    // `tab` is a position, not a folder name, so a reorder can leave it pointing at a different
+    // motion than the one the user was looking at. Follow the folder it used to mean, same idea
+    // as remapFrameIndex above.
+    setTab((prevTab) => {
+      const oldFolder = prevMotions[prevTab]?.folder
+      if (oldFolder === undefined) return prevTab
+      const newIndex = character.motions.findIndex((m) => m.folder === oldFolder)
+      return newIndex >= 0 ? newIndex : prevTab
+    })
+
+    prevMotionsRef.current = character.motions.map((m) => ({ folder: m.folder }))
   }, [character])
 
   const spec = specs[tab]
@@ -173,6 +240,30 @@ export default function App() {
     if (failed.length > 0) {
       setProblem(`Could not read ${failed.join(', ')} to align it/them — left unchanged. Re-export the file and try again.`)
     }
+  }
+
+  /** Writes exactly the files planSave() listed in the confirmation dialog the user just accepted. */
+  async function save() {
+    const files = planSave(character!, dirty)
+    for (const i of dirtyMotions(dirty)) {
+      await writeFile(character!.motions[i].handle, 'animation.json', serialiseSpec(specs[i]))
+    }
+    if (character!.mode === 'appearance') {
+      await writeFile(character!.handle, 'appearance.json', JSON.stringify({ base }, null, 2) + '\n')
+    }
+    setSaved(`Wrote ${files.length} file(s).`)
+    setDirty(new Set())
+    setPending(null)
+  }
+
+  // The only action that creates a directory, so it gets the same care as a write: the name is
+  // typed deliberately (no default), and it only ever creates inside motions/ of the picked folder.
+  async function createMotion(name: string) {
+    if (!name) return
+    const root = await character!.handle.getDirectoryHandle('motions', { create: true })
+    await root.getDirectoryHandle(name, { create: true })
+    setCharacter(await loadCharacter(character!.handle, character!.mode))
+    setNewMotion('')
   }
 
   // Selection decides the target: a frame selected moves that frame, nothing selected moves
@@ -294,12 +385,52 @@ export default function App() {
 
   return (
     <main className="p-8">
-      <h1 className="text-lg font-semibold">{character.name}</h1>
+      <div className="flex items-center gap-3">
+        <h1 className="text-lg font-semibold">{character.name}</h1>
+        <button onClick={() => setPending(planSave(character, dirty))} disabled={dirty.size === 0}
+                className="rounded border px-2 py-0.5 text-xs disabled:opacity-40">
+          Save{dirty.size > 0 && ` (${dirty.size})`}
+        </button>
+        {saved && <span className="text-xs text-green-700">{saved}</span>}
+      </div>
       <p className="text-xs text-gray-500">
         {character.mode === 'appearance'
-          ? `registers as !motions_${character.name}, built on ${character.appearanceBase}`
+          ? `registers as !motions_${character.name}`
           : 'overrides an existing appearance'}
       </p>
+      {character.mode === 'appearance' && (
+        <label className="mt-2 flex items-center gap-2 text-xs">
+          built on
+          <input className="w-72 rounded border px-1 py-0.5" value={base}
+                 onChange={(e) => { setBase(e.target.value); setDirty((p) => new Set(p).add(-1)) }} />
+          <span className="text-gray-500">the vanilla appearance cloned as a donor rig</span>
+        </label>
+      )}
+
+      {pending && (
+        <div className="fixed inset-0 grid place-items-center bg-black/30">
+          <div className="w-96 rounded bg-white p-4 text-sm shadow">
+            <p className="font-medium">About to write into {character.name}:</p>
+            <ul className="mt-2 list-inside list-disc text-xs">
+              {pending.map((f) => <li key={f}><code>{f}</code></li>)}
+            </ul>
+            <p className="mt-2 text-xs text-gray-500">Nothing else is touched, and nothing is deleted.</p>
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => setPending(null)} className="rounded border px-3 py-1">Cancel</button>
+              <button onClick={() => void save()} className="rounded bg-black px-3 py-1 text-white">Write</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {problem && (
+        // Reused from the "pick a folder" screen: the one place a rejected import (or a failed
+        // align, from Task 6) surfaces once a character is already loaded. whitespace-pre-line
+        // because a multi-PNG drop joins its rejections with newlines.
+        <p className="mt-4 whitespace-pre-line rounded border border-red-300 bg-red-50 p-3 text-sm">
+          {problem}
+        </p>
+      )}
 
       {character.s1Warning && (
         <p className="mt-4 rounded border border-amber-400 bg-amber-50 p-3 text-sm">
@@ -307,7 +438,7 @@ export default function App() {
         </p>
       )}
 
-      <div className="mt-4 flex gap-1 border-b text-sm">
+      <div className="mt-4 flex items-center gap-1 border-b text-sm">
         {character.motions.map((m, i) => (
           // selected is a frame index into the OLD tab's spec; carrying it into a motion with
           // fewer frames would crash the arrow-key handler on spec.frames[selected].offset.
@@ -317,6 +448,23 @@ export default function App() {
             {m.folder}
           </button>
         ))}
+
+        <span className="ml-auto flex items-center gap-1 py-1 text-xs">
+          <input
+            list="motion-names"
+            placeholder="new motion"
+            className="w-36 rounded border px-1 py-0.5"
+            value={newMotion}
+            onChange={(e) => setNewMotion(e.target.value)}
+          />
+          <datalist id="motion-names">
+            {MOTION_NAMES.map((n) => <option key={n} value={n} />)}
+            {MOTION_NAMES.filter(isSkill).map((n) => <option key={`${n}_1`} value={`${n}_1`} />)}
+          </datalist>
+          <button onClick={() => void createMotion(newMotion)} className="rounded border px-2 py-0.5">
+            + folder
+          </button>
+        </span>
       </div>
 
       {character.motions[tab] && (
@@ -340,7 +488,23 @@ export default function App() {
           {spec && (
             <>
               <div className="mt-2 flex h-[520px] rounded border">
-                <div className="flex-1">
+                <div
+                  className="flex-1"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={async (e) => {
+                    e.preventDefault()
+                    const result = await importAssets(character.motions[tab].handle, [...e.dataTransfer.files])
+                    if (result.rejected.length > 0) {
+                      setProblem(result.rejected.map((r) => `${r.name}: ${r.why}`).join('\n'))
+                    }
+                    if (result.written.length > 0) {
+                      // Re-read the folder so the new files appear as assets. They are not frames
+                      // yet - see the "+ name" buttons below - loadCharacter only puts every PNG
+                      // into spec.frames when there was no animation.json to begin with.
+                      setCharacter(await loadCharacter(character.handle, character.mode))
+                    }
+                  }}
+                >
                   <Canvas
                     spec={spec}
                     assets={character.motions[tab].assets}
@@ -361,6 +525,26 @@ export default function App() {
                   onFrame={(p) => updateFrame(frameIndex, p)}
                   onSpec={(p) => editSpec((s) => ({ ...s, ...p }))}
                 />
+                <div className="w-40 shrink-0 overflow-y-auto border-l p-3">
+                  <div className="text-xs font-medium">unused assets</div>
+                  <p className="mt-1 text-[10px] leading-tight text-gray-500">
+                    Imported but not on the timeline. Drop PNGs onto the canvas to import more.
+                  </p>
+                  <div className="mt-2 flex flex-col gap-1">
+                    {[...character.motions[tab].assets.keys()]
+                      .filter((name) => !spec.frames.some((f) => f.sprite === name))
+                      .map((name) => (
+                        <button key={name} className="block w-full truncate rounded border px-1 text-left text-xs"
+                                onClick={() => editSpec((s) => {
+                                  s.frames.push({ t: s.duration, sprite: name, offset: [0, 0], scale: 1 })
+                                  s.duration = s.duration + 1 / DEFAULT_FPS
+                                  return s
+                                })}>
+                          + {name}
+                        </button>
+                      ))}
+                  </div>
+                </div>
               </div>
 
               <button onClick={() => setPlayhead(playhead === null ? 0 : null)}

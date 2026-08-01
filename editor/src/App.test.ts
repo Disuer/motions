@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { alignFrame, nudgeAllFrames, remapFrameIndex, sortFramesByTime, spaceEvenlyFrames } from './App'
+import {
+  alignFrame, dirtyMotions, nudgeAllFrames, planSave, remapFrameIndex, sortFramesByTime,
+  spaceEvenlyFrames,
+} from './App'
+import { LoadedCharacter } from './fs'
 import { Frame } from './spec'
 
 function frame(sprite: string, offset: [number, number], scale = 1): Frame {
@@ -163,5 +167,68 @@ describe('remapFrameIndex', () => {
 
   it('passes null through unchanged: no frame selected is not a frame to look up', () => {
     expect(remapFrameIndex(pre, sorted, null)).toBeNull()
+  })
+})
+
+/** planSave only reads .mode and .motions[i].folder; everything else is irrelevant to the plan. */
+function character(mode: 'appearance' | 'override', folders: string[]): LoadedCharacter {
+  return { mode, motions: folders.map((folder) => ({ folder })) } as unknown as LoadedCharacter
+}
+
+describe('dirtyMotions', () => {
+  it('passes real motion indices through untouched', () => {
+    expect(dirtyMotions(new Set([0, 2, 1]))).toEqual(expect.arrayContaining([0, 1, 2]))
+  })
+
+  it('filters out the -1 appearance.json sentinel', () => {
+    expect(dirtyMotions(new Set([-1, 0]))).toEqual([0])
+    expect(dirtyMotions(new Set([-1]))).toEqual([])
+  })
+
+  it('is empty for an empty dirty set', () => {
+    expect(dirtyMotions(new Set())).toEqual([])
+  })
+})
+
+// This is what the confirmation dialog shows and what save() then writes - under-reporting here
+// is worse than no dialog at all, so every case that decides which files appear is covered.
+describe('planSave', () => {
+  it('lists only the dirty motions, not clean ones', () => {
+    const c = character('override', ['Idle', 'S1', 'S2'])
+    expect(planSave(c, new Set([1]))).toEqual(['motions/S1/animation.json'])
+  })
+
+  it('lists every dirty motion, in no particular guaranteed order beyond what the Set gives', () => {
+    const c = character('override', ['Idle', 'S1', 'S2'])
+    expect(new Set(planSave(c, new Set([0, 2])))).toEqual(
+      new Set(['motions/Idle/animation.json', 'motions/S2/animation.json']),
+    )
+  })
+
+  it('includes appearance.json in new-appearance mode', () => {
+    const c = character('appearance', ['Idle'])
+    expect(planSave(c, new Set([0]))).toEqual(['motions/Idle/animation.json', 'appearance.json'])
+  })
+
+  it('excludes appearance.json in override mode', () => {
+    const c = character('override', ['Idle'])
+    expect(planSave(c, new Set([0]))).toEqual(['motions/Idle/animation.json'])
+  })
+
+  it('still writes appearance.json in appearance mode when only the base changed (-1 only)', () => {
+    const c = character('appearance', ['Idle', 'S1'])
+    expect(planSave(c, new Set([-1]))).toEqual(['appearance.json'])
+  })
+
+  it('the -1 sentinel never produces a bogus motions/-1/... path', () => {
+    const c = character('override', ['Idle'])
+    const files = planSave(c, new Set([-1, 0]))
+    expect(files.every((f) => !f.includes('-1'))).toBe(true)
+    expect(files).toEqual(['motions/Idle/animation.json'])
+  })
+
+  it('is empty when nothing is dirty and the character is in override mode', () => {
+    const c = character('override', ['Idle'])
+    expect(planSave(c, new Set())).toEqual([])
   })
 })

@@ -235,3 +235,48 @@ export async function ensurePermission(handle: FileSystemDirectoryHandle): Promi
   if ((await handle.queryPermission(opts)) === 'granted') return true
   return (await handle.requestPermission(opts)) === 'granted'
 }
+
+export async function writeFile(
+  dir: FileSystemDirectoryHandle,
+  name: string,
+  contents: string | BufferSource | Blob,
+): Promise<void> {
+  const handle = await dir.getFileHandle(name, { create: true })
+  const stream = await handle.createWritable()
+  await stream.write(contents)
+  await stream.close()
+}
+
+/**
+ * Copies dropped files into the motion folder, refusing PNGs the game cannot decode. Refusing
+ * here rather than at load time is the whole point: in game the failure is a frame that silently
+ * does not appear, with nothing to connect it back to the export settings that caused it.
+ */
+export async function importAssets(
+  dir: FileSystemDirectoryHandle,
+  files: File[],
+): Promise<{ written: string[]; rejected: { name: string; why: string }[] }> {
+  const written: string[] = []
+  const rejected: { name: string; why: string }[] = []
+
+  for (const file of files) {
+    const lower = file.name.toLowerCase()
+    const bytes = new Uint8Array(await file.arrayBuffer())
+
+    if (lower.endsWith('.png')) {
+      const why = pngRejection(readPngHeader(bytes))
+      if (why) {
+        rejected.push({ name: file.name, why })
+        continue
+      }
+    } else if (!lower.endsWith('.wav') && !lower.endsWith('.ogg')) {
+      rejected.push({ name: file.name, why: 'only .png, .wav and .ogg belong in a motion folder' })
+      continue
+    }
+
+    await writeFile(dir, file.name, bytes)
+    written.push(file.name)
+  }
+
+  return { written, rejected }
+}

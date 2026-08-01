@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_BASE, checkSkillJson, loadCharacter, nameRejection } from './fs'
+import { DEFAULT_BASE, checkSkillJson, importAssets, loadCharacter, nameRejection } from './fs'
 import { defaultSpec } from './spec'
 
 // vitest's environment has no createObjectURL; loadAsset needs it to exist. It only has to
@@ -122,5 +122,108 @@ describe('loadCharacter', () => {
     const root = fakeDir('MyGuy', { motions: dir({}), 'appearance.json': file('{not json') })
     const character = await loadCharacter(root, 'appearance')
     expect(character.appearanceBase).toBe(DEFAULT_BASE)
+  })
+})
+
+/** Builds the first 33 bytes of a PNG: signature + IHDR, same shape as png.test.ts's helper. */
+function pngBytes(bitDepth: number, colorType: number, interlace = 0) {
+  const b = new Uint8Array(33)
+  b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0)
+  const dv = new DataView(b.buffer)
+  dv.setUint32(8, 13)
+  b.set([0x49, 0x48, 0x44, 0x52], 12)
+  dv.setUint32(16, 200)
+  dv.setUint32(20, 400)
+  b[24] = bitDepth
+  b[25] = colorType
+  b[28] = interlace
+  return b
+}
+
+/**
+ * A writable fake directory: records every write rather than touching disk, so importAssets'
+ * real filtering logic runs against something that behaves like FileSystemDirectoryHandle's
+ * write path (getFileHandle(create) -> createWritable -> write -> close).
+ */
+function fakeWritableDir(): FileSystemDirectoryHandle & { written: Map<string, Uint8Array> } {
+  const written = new Map<string, Uint8Array>()
+  return {
+    written,
+    async getFileHandle(name: string) {
+      return {
+        async createWritable() {
+          return {
+            async write(contents: Uint8Array) { written.set(name, contents) },
+            async close() {},
+          }
+        },
+      }
+    },
+  } as unknown as FileSystemDirectoryHandle & { written: Map<string, Uint8Array> }
+}
+
+// importAssets is the last line of defence against PNGs Lethe's decoder cannot read - in game
+// those fail silently, so every rejection here has to name the file and the reason.
+describe('importAssets', () => {
+  it('accepts a valid 8-bit RGBA PNG', async () => {
+    const dir = fakeWritableDir()
+    const png = new File([pngBytes(8, 6)], 'good.png')
+    const result = await importAssets(dir, [png])
+    expect(result.written).toEqual(['good.png'])
+    expect(result.rejected).toEqual([])
+    expect(dir.written.has('good.png')).toBe(true)
+  })
+
+  it('rejects an indexed PNG by name, with the reason', async () => {
+    const dir = fakeWritableDir()
+    const png = new File([pngBytes(8, 3)], 'indexed.png')
+    const result = await importAssets(dir, [png])
+    expect(result.written).toEqual([])
+    expect(result.rejected).toEqual([{ name: 'indexed.png', why: expect.stringMatching(/indexed/) }])
+    expect(dir.written.size).toBe(0)
+  })
+
+  it('rejects a 16-bit PNG', async () => {
+    const dir = fakeWritableDir()
+    const png = new File([pngBytes(16, 6)], 'sixteen.png')
+    const result = await importAssets(dir, [png])
+    expect(result.rejected).toEqual([{ name: 'sixteen.png', why: expect.stringMatching(/8-bit/) }])
+  })
+
+  it('rejects an interlaced PNG', async () => {
+    const dir = fakeWritableDir()
+    const png = new File([pngBytes(8, 6, 1)], 'interlaced.png')
+    const result = await importAssets(dir, [png])
+    expect(result.rejected).toEqual([{ name: 'interlaced.png', why: expect.stringMatching(/interlac/) }])
+  })
+
+  it('accepts .wav and .ogg without inspecting them as PNGs', async () => {
+    const dir = fakeWritableDir()
+    const wav = new File([new Uint8Array(4)], 'hit.wav')
+    const ogg = new File([new Uint8Array(4)], 'hit.ogg')
+    const result = await importAssets(dir, [wav, ogg])
+    expect(result.written.sort()).toEqual(['hit.ogg', 'hit.wav'])
+    expect(result.rejected).toEqual([])
+  })
+
+  it('rejects an unrelated extension', async () => {
+    const dir = fakeWritableDir()
+    const txt = new File([new Uint8Array(4)], 'notes.txt')
+    const result = await importAssets(dir, [txt])
+    expect(result.written).toEqual([])
+    expect(result.rejected).toEqual([{ name: 'notes.txt', why: expect.stringMatching(/only \.png, \.wav and \.ogg/) }])
+  })
+
+  it('writes the accepted files and skips the rejected ones in a mixed batch', async () => {
+    const dir = fakeWritableDir()
+    const files = [
+      new File([pngBytes(8, 6)], 'good.png'),
+      new File([pngBytes(8, 3)], 'bad.png'),
+      new File([new Uint8Array(4)], 'hit.wav'),
+    ]
+    const result = await importAssets(dir, files)
+    expect(result.written.sort()).toEqual(['good.png', 'hit.wav'])
+    expect(result.rejected.map((r) => r.name)).toEqual(['bad.png'])
+    expect(dir.written.size).toBe(2)
   })
 })
