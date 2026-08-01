@@ -84,3 +84,22 @@ export function alignOffset(b: Bbox, width: number, height: number, ep: number):
   const y = -(height - b.y - b.h) / ep
   return [x + 0, y + 0]  // Adding 0 converts -0 to 0
 }
+
+/**
+ * Decodes an image and finds its opaque bounds. Uses a throwaway canvas because ImageData is
+ * the only way to see alpha; the result is cached by the caller, not here.
+ */
+export async function boundsOf(url: string, width: number, height: number): Promise<Bbox | null> {
+  if (width === 0 || height === 0) return null
+  const img = new Image()
+  img.src = url
+  await img.decode()
+
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  if (!ctx) return null
+  ctx.drawImage(img, 0, 0)
+  return opaqueBounds(ctx.getImageData(0, 0, width, height))
+}

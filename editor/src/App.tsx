@@ -1,9 +1,33 @@
 import { useEffect, useState } from 'react'
 import Canvas from './Canvas'
+import Inspector from './Inspector'
 import {
   LoadedCharacter, Mode, ensurePermission, loadCharacter, nameRejection, pickFolder,
   recallFolder, rememberFolder,
 } from './fs'
+import { alignOffset, Bbox, boundsOf } from './png'
+import { AnimationSpec, effectivePpu, Frame } from './spec'
+
+/**
+ * Moves every frame by the same amount. Pulled out of the component so it is testable without
+ * React: "add (dx, dy) to every frame's offset" is the operation an author leans on hardest to
+ * fix "the whole motion sits slightly too low", and an off-by-one in which frames it touches
+ * would otherwise only show up as a half-shifted motion in the browser.
+ */
+export function nudgeAllFrames(frames: Frame[], dx: number, dy: number): Frame[] {
+  return frames.map((f) => ({ ...f, offset: [f.offset[0] + dx, f.offset[1] + dy] }))
+}
+
+/**
+ * The per-frame align decision, separated from the async decode in `boundsOf` so it can be
+ * tested without a canvas. axis 'xy' snaps bottom-centre; 'x' leaves vertical alone so a
+ * deliberate jump or crouch survives aligning everything else.
+ */
+export function alignFrame(f: Frame, b: Bbox, width: number, height: number, ppu: number, axis: 'xy' | 'x'): Frame {
+  const ep = effectivePpu(ppu, f.scale)
+  const [x, y] = alignOffset(b, width, height, ep)
+  return { ...f, offset: [x, axis === 'x' ? f.offset[1] : y] }
+}
 
 const SUPPORTED = typeof window !== 'undefined' && 'showDirectoryPicker' in window
 
@@ -17,9 +41,77 @@ export default function App() {
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 180 })
 
+  // The loaded character is immutable once read; edits live in a separate specs array keyed by
+  // tab index, so saving knows exactly what changed.
+  const [specs, setSpecs] = useState<AnimationSpec[]>([])
+  const [dirty, setDirty] = useState<Set<number>>(new Set())
+  const [selected, setSelected] = useState<number | null>(null)
+
   useEffect(() => {
     void recallFolder().then(setRecalled)
   }, [])
+
+  useEffect(() => {
+    if (character) setSpecs(character.motions.map((m) => structuredClone(m.spec)))
+  }, [character])
+
+  const spec = specs[tab]
+
+  function editSpec(patch: (s: AnimationSpec) => AnimationSpec) {
+    setSpecs((prev) => prev.map((s, i) => (i === tab ? patch(structuredClone(s)) : s)))
+    setDirty((prev) => new Set(prev).add(tab))
+  }
+
+  function updateFrame(i: number, patch: Partial<Frame>) {
+    editSpec((s) => {
+      s.frames[i] = { ...s.frames[i], ...patch }
+      return s
+    })
+  }
+
+  function nudgeAll(dx: number, dy: number) {
+    editSpec((s) => {
+      s.frames = nudgeAllFrames(s.frames, dx, dy)
+      return s
+    })
+  }
+
+  async function alignAll(axis: 'xy' | 'x') {
+    const motion = character!.motions[tab]
+    const next = await Promise.all(
+      spec.frames.map(async (f) => {
+        const asset = motion.assets.get(f.sprite)
+        if (!asset) return f
+        const b = await boundsOf(asset.url, asset.width, asset.height)
+        if (!b) return f
+        return alignFrame(f, b, asset.width, asset.height, spec.ppu, axis)
+      }),
+    )
+    editSpec((s) => {
+      s.frames = next
+      return s
+    })
+  }
+
+  // Selection decides the target: a frame selected moves that frame, nothing selected moves
+  // every frame at once.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const step = e.shiftKey ? 0.1 : 0.01
+      const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0
+      const dy = e.key === 'ArrowUp' ? step : e.key === 'ArrowDown' ? -step : 0
+      if (dx === 0 && dy === 0) return
+      if (document.activeElement?.tagName === 'INPUT') return  // let number fields do their own thing
+      e.preventDefault()
+
+      if (selected === null) nudgeAll(dx, dy)
+      else updateFrame(selected, {
+        offset: [spec.frames[selected].offset[0] + dx, spec.frames[selected].offset[1] + dy],
+      })
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selected, spec, tab])
 
   async function open(handle: FileSystemDirectoryHandle, mode: Mode) {
     setProblem(null)
@@ -127,20 +219,39 @@ export default function App() {
             <span>frame {frameIndex + 1} / {character.motions[tab].spec.frames.length}</span>
             <button onClick={() => setFrameIndex((i) => Math.max(0, i - 1))}>prev</button>
             <button onClick={() => setFrameIndex((i) =>
-              Math.min(character.motions[tab].spec.frames.length - 1, i + 1))}>next</button>
+              Math.max(0, Math.min(character.motions[tab].spec.frames.length - 1, i + 1)))}>next</button>
+            <button onClick={() => void alignAll('xy')} className="rounded border px-2 py-0.5">Align all</button>
+            <button onClick={() => void alignAll('x')} className="rounded border px-2 py-0.5">Align X only</button>
+            <button onClick={() => setSelected(selected === null ? frameIndex : null)}
+                    className="rounded border px-2 py-0.5">
+              {selected === null ? 'arrows move: ALL frames' : `arrows move: frame ${selected + 1}`}
+            </button>
           </div>
-          <div className="mt-2 h-[520px] rounded border">
-            <Canvas
-              spec={character.motions[tab].spec}
-              assets={character.motions[tab].assets}
-              index={frameIndex}
-              onionSkin={onionSkin}
-              zoom={zoom}
-              pan={pan}
-              onPan={setPan}
-              onDragFrame={() => {}}
-            />
-          </div>
+          {spec && (
+            <div className="mt-2 flex h-[520px] rounded border">
+              <div className="flex-1">
+                <Canvas
+                  spec={spec}
+                  assets={character.motions[tab].assets}
+                  index={frameIndex}
+                  onionSkin={onionSkin}
+                  zoom={zoom}
+                  pan={pan}
+                  onPan={setPan}
+                  onDragFrame={(dx, dy) => updateFrame(frameIndex, {
+                    offset: [spec.frames[frameIndex].offset[0] + dx,
+                             spec.frames[frameIndex].offset[1] + dy],
+                  })}
+                />
+              </div>
+              <Inspector
+                spec={spec}
+                index={frameIndex}
+                onFrame={(p) => updateFrame(frameIndex, p)}
+                onSpec={(p) => editSpec((s) => ({ ...s, ...p }))}
+              />
+            </div>
+          )}
         </>
       )}
       {character.motions.length === 0 && <p className="mt-4 text-sm text-gray-500">No motions/ folder found.</p>}
