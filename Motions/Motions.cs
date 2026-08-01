@@ -147,6 +147,9 @@ public class Motions
                             }
                         }
 
+                        // Bundle-free sprite motions from motions/<Motion>/
+                        SpriteMotionLoader.LoadCharacterFolder(charDir, appearanceID);
+
                         // Discover JSON definitions
                         foreach (var detailObj in Enum.GetValues(typeof(MOTION_DETAIL)))
                         {
@@ -227,14 +230,18 @@ public class Motions
         CueExtractor.EagerCacheDashEffects();
         bool hasCustomJSON = MotionData.HasDefinition(appearanceID);
         bool hasCustomBundle = MotionData.HasBundle(appearanceID);
+        bool hasSpriteMotion = MotionData.HasSpriteMotion(appearanceID);
 
-        if (hasCustomJSON || hasCustomBundle)
+        if (hasCustomJSON || hasCustomBundle || hasSpriteMotion)
         {
-            if (hasCustomBundle)
+            if (hasCustomBundle || hasSpriteMotion)
             {
-                Logger.LogInfo($"Custom bundle registered for {appearanceID}, attaching sidecar on init.");
+                Logger.LogInfo($"Custom motion source registered for {appearanceID}, attaching sidecar on init.");
                 MotionInjector.AttachSidecar(__instance, appearanceID);
-                CueExtractor.EagerCacheMotions(appearanceID);
+
+                // Only bundles have timelines to pre-clone; sprite motions are already built.
+                if (hasCustomBundle)
+                    CueExtractor.EagerCacheMotions(appearanceID);
             }
 
             // Collect all original VFX tracks across all motions for cross-motion referencing
@@ -289,7 +296,11 @@ public class Motions
         try
         {
             string appearanceID = __instance.charInfo.appearanceID;
-            if (MotionData.HasDefinition(appearanceID) || MotionData.HasBundle(appearanceID))
+            // Sprite-only characters need the spine renderer off too, or it keeps drawing underneath
+            // the sidecar. OriginalRenderer.enabled = false in PlayCustomMotion covers the plain
+            // SpriteRenderer, not the spine one - they are separate.
+            if (MotionData.HasDefinition(appearanceID) || MotionData.HasBundle(appearanceID) ||
+                MotionData.HasSpriteMotion(appearanceID))
             {
                 __instance.SetDisableSpine(true);
             }

@@ -88,7 +88,8 @@ public static class MotionInjector
             string appearanceID = forcedID ?? character.charInfo.appearanceID;
             TimelineAsset customTimeline = MotionData.FindTimelineForAppearance(appearanceID);
 
-            if (customTimeline == null) return;
+            // A sprite motion has no TimelineAsset to find, so the bundle check alone would bail out.
+            if (customTimeline == null && !MotionData.HasSpriteMotion(appearanceID)) return;
 
             GameObject sandboxObj = new("Motions_Sandbox_Test");
             sandboxObj.transform.SetParent(character.transform);
@@ -164,7 +165,8 @@ public static class MotionInjector
 
         var sandboxTransform = appearance.transform.FindChild("Motions_Sandbox_Test");
 
-        if (sandboxTransform == null && MotionData.HasBundle(appearanceID))
+        if (sandboxTransform == null &&
+            (MotionData.HasBundle(appearanceID) || MotionData.HasSpriteMotion(appearanceID)))
         {
             AttachSidecar(appearance, appearanceID);
             sandboxTransform = appearance.transform.FindChild("Motions_Sandbox_Test");
