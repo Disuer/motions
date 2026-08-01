@@ -24,6 +24,7 @@ not have to zero-pad.
 ## Taking control: `animation.json`
 
 Put an `animation.json` next to the PNGs when the default is not what you want.
+You can also [write it in the browser](Editor.md) instead of by hand.
 
 ```json
 {

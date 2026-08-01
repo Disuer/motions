@@ -3,7 +3,7 @@ name: Deploy docs to Pages
 on:
   push:
     branches: ["main"]
-    paths: ["docs/**", ".github/workflows/docs.yml"]
+    paths: ["docs/**", "editor/**", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
 permissions:
@@ -29,6 +29,17 @@ jobs:
           cargo install mdbook-template
       - name: Build
         run: mdbook build docs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build editor
+        working-directory: editor
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Copy editor into the book
+        run: cp -r editor/dist docs/book/editor
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
