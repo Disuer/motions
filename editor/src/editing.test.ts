@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   alignFrame, dirtyMotions, nudgeAllFrames, planSave, remapFrameIndex, sortFramesByTime,
   spaceEvenlyFrames,
-} from './App'
+} from './editing'
 import { LoadedCharacter } from './fs'
 import { Frame } from './spec'
 
