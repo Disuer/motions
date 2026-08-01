@@ -43,10 +43,25 @@ public static class MotionInjector
                 }
             }
 
+            // Coin N of this motion lives in folder '<Motion>_N'; MotionKey.Create folds 0 to -1.
+            // 16 is a ceiling well above any real skill's coin count, so probing a fixed range
+            // avoids a second discovery pass.
+            var coinDurations = new double?[16];
+            bool anySpriteCoin = false;
+            for (int coin = 0; coin < coinDurations.Length; coin++)
+            {
+                if (MotionData.SpriteMotions.TryGetValue(
+                        MotionKey.Create(appearanceID, motionDetail, coin), out var sm))
+                {
+                    coinDurations[coin] = sm.Duration;
+                    anySpriteCoin = true;
+                }
+            }
+
             var customTimelines = new System.Collections.Generic.List<TimelineAsset>();
             for (int variant = 0; variant < bundleTimelines.Count; variant++)
             {
-                var built = TimelineBuilder.GetTimelines(motionName, jsonPath, bundleTimelines[variant], appearanceID, allVfxTracks, variant);
+                var built = TimelineBuilder.GetTimelines(motionName, jsonPath, bundleTimelines[variant], appearanceID, allVfxTracks, variant, anySpriteCoin ? coinDurations : null);
                 if (built != null)
                     customTimelines.AddRange(built);
             }
