@@ -94,6 +94,46 @@ describe('parseSpec', () => {
   })
 })
 
+// SpriteMotionSpec.cs configures its deserializer with AllowTrailingCommas and
+// ReadCommentHandling.Skip (Motions.Tests/Program.cs asserts the trailing-comma case). The editor
+// has to tolerate at least as much, or a hand-edited file the game loads fine gets rejected here.
+describe('parseSpec tolerates what the plugin tolerates', () => {
+  it('allows a trailing comma in an array', () => {
+    const { error } = parseSpec('{"duration":1,"frames":[{"t":0,"sprite":"a.png"},]}')
+    expect(error).toBeNull()
+  })
+  it('allows a trailing comma in an object', () => {
+    const { spec, error } = parseSpec('{"duration":1,"ppu":50,"frames":[{"t":0,"sprite":"a.png"},]}')
+    expect(error).toBeNull()
+    expect(spec!.ppu).toBe(50)
+  })
+  it('skips a line comment on its own line', () => {
+    const { spec, error } = parseSpec('{\n// a comment\n"duration":1,"frames":[{"t":0,"sprite":"a.png"}]}')
+    expect(error).toBeNull()
+    expect(spec!.frames[0].sprite).toBe('a.png')
+  })
+  it('skips a line comment trailing real content', () => {
+    const { error } = parseSpec('{"duration":1, // seconds\n"frames":[{"t":0,"sprite":"a.png"}]}')
+    expect(error).toBeNull()
+  })
+  it('skips a block comment', () => {
+    const { error } = parseSpec('{"duration":1,/* block */"frames":[{"t":0,"sprite":"a.png"}]}')
+    expect(error).toBeNull()
+  })
+  it('leaves a "//" inside a string value intact', () => {
+    const { spec } = parseSpec('{"duration":1,"frames":[{"t":0,"sprite":"a//b.png"}]}')
+    expect(spec!.frames[0].sprite).toBe('a//b.png')
+  })
+  it('leaves a comma before a closing bracket inside a string value intact', () => {
+    const { spec } = parseSpec('{"duration":1,"frames":[{"t":0,"sprite":"a,"}]}')
+    expect(spec!.frames[0].sprite).toBe('a,')
+  })
+  it('does not end a string early on an escaped quote', () => {
+    const { spec } = parseSpec('{"duration":1,"frames":[{"t":0,"sprite":"a\\"b.png"}]}')
+    expect(spec!.frames[0].sprite).toBe('a"b.png')
+  })
+})
+
 describe('round trip', () => {
   it('does not drift values', () => {
     const source = JSON.stringify({

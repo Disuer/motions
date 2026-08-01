@@ -114,13 +114,87 @@ const num = (v: unknown, fallback = 0): number => {
 }
 
 /**
- * Parses and validates. Returns an error string rather than throwing, and rejects exactly what
- * the plugin rejects, so a file the editor accepts is a file the game will load.
+ * The plugin's deserializer (SpriteMotionSpec.cs) is configured with AllowTrailingCommas and
+ * ReadCommentHandling.Skip, so a hand-edited animation.json with either loads fine in the game.
+ * JSON.parse accepts neither, so we strip them first - walking the string ourselves rather than
+ * regexing, because a regex cannot tell a "//" inside a sprite path from a line comment.
+ */
+function stripJsoncExtras(json: string): string {
+  let out = ''
+  let inString = false
+  let i = 0
+  while (i < json.length) {
+    const c = json[i]
+
+    if (inString) {
+      out += c
+      if (c === '\\' && i + 1 < json.length) {
+        // An escape sequence: copy the following character verbatim (works for \" too,
+        // which is the whole reason this needs a walk instead of a regex).
+        out += json[i + 1]
+        i += 2
+        continue
+      }
+      if (c === '"') inString = false
+      i++
+      continue
+    }
+
+    if (c === '"') {
+      inString = true
+      out += c
+      i++
+      continue
+    }
+    if (c === '/' && json[i + 1] === '/') {
+      i += 2
+      while (i < json.length && json[i] !== '\n') i++
+      continue
+    }
+    if (c === '/' && json[i + 1] === '*') {
+      i += 2
+      while (i < json.length && !(json[i] === '*' && json[i + 1] === '/')) i++
+      i += 2
+      continue
+    }
+    if (c === ',') {
+      // Look past whitespace/comments for the next significant character; a comma followed
+      // by ']' or '}' is a trailing comma and gets dropped rather than copied.
+      let j = i + 1
+      for (;;) {
+        if (/\s/.test(json[j])) { j++; continue }
+        if (json[j] === '/' && json[j + 1] === '/') { while (j < json.length && json[j] !== '\n') j++; continue }
+        if (json[j] === '/' && json[j + 1] === '*') {
+          j += 2
+          while (j < json.length && !(json[j] === '*' && json[j + 1] === '/')) j++
+          j += 2
+          continue
+        }
+        break
+      }
+      if (json[j] === ']' || json[j] === '}') { i++; continue }
+      out += c
+      i++
+      continue
+    }
+
+    out += c
+    i++
+  }
+  return out
+}
+
+/**
+ * Parses and validates. Returns an error string rather than throwing. Rejects exactly what the
+ * plugin rejects structurally - no frames, bad duration, bad ppu, a frame with no sprite - so a
+ * file the editor accepts is a file the game will load. It is deliberately lenient about field
+ * types (e.g. `"duration": "1.2"` parses), because saving normalises them back to real numbers,
+ * so opening and re-saving a slightly-wrong file repairs it instead of refusing it.
  */
 export function parseSpec(json: string): { spec: AnimationSpec | null; error: string | null } {
   let raw: any
   try {
-    raw = JSON.parse(json)
+    raw = JSON.parse(stripJsoncExtras(json))
   } catch (e) {
     return { spec: null, error: `malformed JSON: ${(e as Error).message}` }
   }
