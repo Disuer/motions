@@ -202,7 +202,10 @@ export default function App() {
 
       <div className="mt-4 flex gap-1 border-b text-sm">
         {character.motions.map((m, i) => (
-          <button key={m.folder} onClick={() => { setTab(i); setFrameIndex(0) }}
+          // selected is a frame index into the OLD tab's spec; carrying it into a motion with
+          // fewer frames would crash the arrow-key handler on spec.frames[selected].offset.
+          // null is the safe reset - it means "arrows move ALL frames", not "frame 0 of the wrong motion".
+          <button key={m.folder} onClick={() => { setTab(i); setFrameIndex(0); setSelected(null) }}
                   className={`px-3 py-1 ${i === tab ? 'border-b-2 border-black font-medium' : 'text-gray-600'}`}>
             {m.folder}
           </button>
