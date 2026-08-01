@@ -30,6 +30,8 @@
     <ItemGroup>
         <!-- Unity Editor sample script shipped with the docs; not part of the plugin. -->
         <Compile Remove="docs\**\*.cs" />
+        <!-- Test harness; built separately via its own project file. -->
+        <Compile Remove="Motions.Tests\**\*.cs" />
     </ItemGroup>
 
     <ItemGroup>
