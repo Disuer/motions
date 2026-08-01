@@ -143,13 +143,18 @@ function pngBytes(bitDepth: number, colorType: number, interlace = 0) {
 /**
  * A writable fake directory: records every write rather than touching disk, so importAssets'
  * real filtering logic runs against something that behaves like FileSystemDirectoryHandle's
- * write path (getFileHandle(create) -> createWritable -> write -> close).
+ * write path (getFileHandle(create) -> createWritable -> write -> close). getFileHandle without
+ * `create` throws for a name not yet written, same as the real API - importAssets uses exactly
+ * that call to detect a collision before overwriting.
  */
 function fakeWritableDir(): FileSystemDirectoryHandle & { written: Map<string, Uint8Array> } {
   const written = new Map<string, Uint8Array>()
   return {
     written,
-    async getFileHandle(name: string) {
+    async getFileHandle(name: string, opts?: { create?: boolean }) {
+      if (!opts?.create && !written.has(name)) {
+        throw new DOMException(`not found: ${name}`, 'NotFoundError')
+      }
       return {
         async createWritable() {
           return {
@@ -170,6 +175,7 @@ describe('importAssets', () => {
     const png = new File([pngBytes(8, 6)], 'good.png')
     const result = await importAssets(dir, [png])
     expect(result.written).toEqual(['good.png'])
+    expect(result.replaced).toEqual([])
     expect(result.rejected).toEqual([])
     expect(dir.written.has('good.png')).toBe(true)
   })
@@ -223,7 +229,32 @@ describe('importAssets', () => {
     ]
     const result = await importAssets(dir, files)
     expect(result.written.sort()).toEqual(['good.png', 'hit.wav'])
+    expect(result.replaced).toEqual([])
     expect(result.rejected.map((r) => r.name)).toEqual(['bad.png'])
     expect(dir.written.size).toBe(2)
+  })
+
+  // writeFile always truncates (getFileHandle(create: true) + createWritable), so re-dropping a
+  // re-exported PNG silently clobbers the previous bytes unless something says so. Not a delete,
+  // but still someone's art disappearing with no acknowledgement.
+  it('reports a re-imported file as replaced, not just written', async () => {
+    const dir = fakeWritableDir()
+    const first = await importAssets(dir, [new File([pngBytes(8, 6)], 'good.png')])
+    expect(first.written).toEqual(['good.png'])
+    expect(first.replaced).toEqual([])
+
+    const second = await importAssets(dir, [new File([pngBytes(8, 6)], 'good.png')])
+    expect(second.written).toEqual(['good.png'])
+    expect(second.replaced).toEqual(['good.png'])
+  })
+
+  it('does not mark a file in the same batch as replaced when it is genuinely new', async () => {
+    const dir = fakeWritableDir()
+    const result = await importAssets(dir, [
+      new File([pngBytes(8, 6)], 'a.png'),
+      new File([pngBytes(8, 6)], 'b.png'),
+    ])
+    expect(result.written.sort()).toEqual(['a.png', 'b.png'])
+    expect(result.replaced).toEqual([])
   })
 })

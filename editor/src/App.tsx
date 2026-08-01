@@ -10,7 +10,7 @@ import { MOTION_NAMES, isSkill } from './motions'
 import { boundsOf } from './png'
 import { AnimationSpec, DEFAULT_FPS, Frame, frameIndexAt, serialiseSpec } from './spec'
 import {
-  alignFrame, dirtyMotions, nudgeAllFrames, planSave, remapFrameIndex, sortFramesByTime,
+  alignFrame, nudgeAllFrames, planSave, remapFrameIndex, SavePlan, sortFramesByTime,
   spaceEvenlyFrames,
 } from './editing'
 
@@ -35,7 +35,7 @@ export default function App() {
   const [playhead, setPlayhead] = useState<number | null>(null)
 
   const [base, setBase] = useState(DEFAULT_BASE)
-  const [pending, setPending] = useState<string[] | null>(null)   // confirmation list
+  const [pending, setPending] = useState<SavePlan | null>(null)   // frozen confirmation plan
   const [saved, setSaved] = useState<string | null>(null)
   const [newMotion, setNewMotion] = useState('')
 
@@ -170,17 +170,27 @@ export default function App() {
     }
   }
 
-  /** Writes exactly the files planSave() listed in the confirmation dialog the user just accepted. */
-  async function save() {
-    const files = planSave(character!, dirty)
-    for (const i of dirtyMotions(dirty)) {
+  /**
+   * Writes precisely what `plan` listed - never re-reads live `dirty`. The dialog is the promise;
+   * if a tab was edited after it opened, that edit simply stays dirty and unsaved rather than
+   * sneaking into a write it was never shown in. Only the indices (and appearance.json, if part
+   * of the plan) that were actually written come out of `dirty` afterward, so a since-dirtied tab
+   * keeps its flag and its own Save button count.
+   */
+  async function save(plan: SavePlan) {
+    for (const i of plan.indices) {
       await writeFile(character!.motions[i].handle, 'animation.json', serialiseSpec(specs[i]))
     }
-    if (character!.mode === 'appearance') {
+    if (plan.appearance) {
       await writeFile(character!.handle, 'appearance.json', JSON.stringify({ base }, null, 2) + '\n')
     }
-    setSaved(`Wrote ${files.length} file(s).`)
-    setDirty(new Set())
+    setSaved(`Wrote ${plan.files.length} file(s).`)
+    setDirty((prev) => {
+      const next = new Set(prev)
+      for (const i of plan.indices) next.delete(i)
+      if (plan.appearance) next.delete(-1)
+      return next
+    })
     setPending(null)
   }
 
@@ -198,6 +208,11 @@ export default function App() {
   // every frame at once.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // Belt-and-braces alongside `inert` on the main content below: the confirmation dialog is
+      // meant to be an honest, frozen snapshot of what Save will write, so nothing - including an
+      // arrow-key nudge of a clean tab sitting behind the dialog - may change editor state while
+      // it's open.
+      if (pending) return
       const step = e.shiftKey ? 0.1 : 0.01
       const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0
       const dy = e.key === 'ArrowUp' ? step : e.key === 'ArrowDown' ? -step : 0
@@ -216,7 +231,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selected, spec, tab])
+  }, [selected, spec, tab, pending])
 
   // Steps through frames with the same frameIndexAt lookup the runtime uses, rather than
   // tweening — a blended preview would have authors aligning frames against a lie.
@@ -313,6 +328,11 @@ export default function App() {
 
   return (
     <main className="p-8">
+      {/* inert, not just conditional styling: while the confirmation dialog is open, nothing in
+          here should be clickable, focusable or reachable by keyboard - it is the native
+          replacement for a hand-rolled focus trap, and the keydown gate above is the redundant
+          backstop in case some interaction reaches state without going through focus at all. */}
+      <div inert={pending !== null}>
       <div className="flex items-center gap-3">
         <h1 className="text-lg font-semibold">{character.name}</h1>
         <button onClick={() => setPending(planSave(character, dirty))} disabled={dirty.size === 0}
@@ -333,22 +353,6 @@ export default function App() {
                  onChange={(e) => { setBase(e.target.value); setDirty((p) => new Set(p).add(-1)) }} />
           <span className="text-gray-500">the vanilla appearance cloned as a donor rig</span>
         </label>
-      )}
-
-      {pending && (
-        <div className="fixed inset-0 grid place-items-center bg-black/30">
-          <div className="w-96 rounded bg-white p-4 text-sm shadow">
-            <p className="font-medium">About to write into {character.name}:</p>
-            <ul className="mt-2 list-inside list-disc text-xs">
-              {pending.map((f) => <li key={f}><code>{f}</code></li>)}
-            </ul>
-            <p className="mt-2 text-xs text-gray-500">Nothing else is touched, and nothing is deleted.</p>
-            <div className="mt-3 flex justify-end gap-2">
-              <button onClick={() => setPending(null)} className="rounded border px-3 py-1">Cancel</button>
-              <button onClick={() => void save()} className="rounded bg-black px-3 py-1 text-white">Write</button>
-            </div>
-          </div>
-        </div>
       )}
 
       {problem && (
@@ -426,6 +430,14 @@ export default function App() {
                       setProblem(result.rejected.map((r) => `${r.name}: ${r.why}`).join('\n'))
                     }
                     if (result.written.length > 0) {
+                      // A re-imported file replaces its old bytes (writeFile always truncates) -
+                      // not a delete, but still someone's art disappearing with no acknowledgement
+                      // if "4 imported" doesn't say which of those 4 already existed.
+                      const newCount = result.written.length - result.replaced.length
+                      const parts = []
+                      if (newCount > 0) parts.push(`${newCount} imported`)
+                      if (result.replaced.length > 0) parts.push(`${result.replaced.length} replaced`)
+                      setSaved(parts.join(', '))
                       // Re-read the folder so the new files appear as assets. They are not frames
                       // yet - see the "+ name" buttons below - loadCharacter only puts every PNG
                       // into spec.frames when there was no animation.json to begin with.
@@ -495,6 +507,25 @@ export default function App() {
         </>
       )}
       {character.motions.length === 0 && <p className="mt-4 text-sm text-gray-500">No motions/ folder found.</p>}
+      </div>
+
+      {/* Outside the inert wrapper on purpose - the dialog is the one thing that must stay
+          interactive while it is up. */}
+      {pending && (
+        <div className="fixed inset-0 grid place-items-center bg-black/30">
+          <div className="w-96 rounded bg-white p-4 text-sm shadow">
+            <p className="font-medium">About to write into {character.name}:</p>
+            <ul className="mt-2 list-inside list-disc text-xs">
+              {pending.files.map((f) => <li key={f}><code>{f}</code></li>)}
+            </ul>
+            <p className="mt-2 text-xs text-gray-500">Nothing else is touched, and nothing is deleted.</p>
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => setPending(null)} className="rounded border px-3 py-1">Cancel</button>
+              <button onClick={() => void save(pending)} className="rounded bg-black px-3 py-1 text-white">Write</button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

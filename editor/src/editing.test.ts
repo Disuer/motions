@@ -195,40 +195,68 @@ describe('dirtyMotions', () => {
 describe('planSave', () => {
   it('lists only the dirty motions, not clean ones', () => {
     const c = character('override', ['Idle', 'S1', 'S2'])
-    expect(planSave(c, new Set([1]))).toEqual(['motions/S1/animation.json'])
+    const plan = planSave(c, new Set([1]))
+    expect(plan.indices).toEqual([1])
+    expect(plan.files).toEqual(['motions/S1/animation.json'])
   })
 
   it('lists every dirty motion, in no particular guaranteed order beyond what the Set gives', () => {
     const c = character('override', ['Idle', 'S1', 'S2'])
-    expect(new Set(planSave(c, new Set([0, 2])))).toEqual(
+    const plan = planSave(c, new Set([0, 2]))
+    expect(new Set(plan.indices)).toEqual(new Set([0, 2]))
+    expect(new Set(plan.files)).toEqual(
       new Set(['motions/Idle/animation.json', 'motions/S2/animation.json']),
     )
   })
 
   it('includes appearance.json in new-appearance mode', () => {
     const c = character('appearance', ['Idle'])
-    expect(planSave(c, new Set([0]))).toEqual(['motions/Idle/animation.json', 'appearance.json'])
+    const plan = planSave(c, new Set([0]))
+    expect(plan.appearance).toBe(true)
+    expect(plan.files).toEqual(['motions/Idle/animation.json', 'appearance.json'])
   })
 
   it('excludes appearance.json in override mode', () => {
     const c = character('override', ['Idle'])
-    expect(planSave(c, new Set([0]))).toEqual(['motions/Idle/animation.json'])
+    const plan = planSave(c, new Set([0]))
+    expect(plan.appearance).toBe(false)
+    expect(plan.files).toEqual(['motions/Idle/animation.json'])
   })
 
   it('still writes appearance.json in appearance mode when only the base changed (-1 only)', () => {
     const c = character('appearance', ['Idle', 'S1'])
-    expect(planSave(c, new Set([-1]))).toEqual(['appearance.json'])
+    const plan = planSave(c, new Set([-1]))
+    expect(plan.indices).toEqual([])
+    expect(plan.appearance).toBe(true)
+    expect(plan.files).toEqual(['appearance.json'])
   })
 
   it('the -1 sentinel never produces a bogus motions/-1/... path', () => {
     const c = character('override', ['Idle'])
-    const files = planSave(c, new Set([-1, 0]))
-    expect(files.every((f) => !f.includes('-1'))).toBe(true)
-    expect(files).toEqual(['motions/Idle/animation.json'])
+    const plan = planSave(c, new Set([-1, 0]))
+    expect(plan.indices).toEqual([0])
+    expect(plan.files.every((f) => !f.includes('-1'))).toBe(true)
+    expect(plan.files).toEqual(['motions/Idle/animation.json'])
   })
 
   it('is empty when nothing is dirty and the character is in override mode', () => {
     const c = character('override', ['Idle'])
-    expect(planSave(c, new Set())).toEqual([])
+    const plan = planSave(c, new Set())
+    expect(plan.indices).toEqual([])
+    expect(plan.files).toEqual([])
+  })
+
+  // The root-cause regression from the review finding: save() must consume the plan object, not
+  // re-read `dirty`, because nothing on screen stops `dirty` growing while the confirmation
+  // dialog is open. This pins the half of that fix that lives in planSave: its output is a
+  // snapshot, not a live view - mutating the Set handed to it after the fact must not change
+  // what a previously-taken plan says.
+  it('freezes the write set at plan time: a dirty set that grows afterward does not change it', () => {
+    const c = character('override', ['Idle', 'S1'])
+    const dirty = new Set([0])
+    const plan = planSave(c, dirty)
+    dirty.add(1) // simulates an edit made after the confirmation dialog opened
+    expect(plan.indices).toEqual([0])
+    expect(plan.files).toEqual(['motions/Idle/animation.json'])
   })
 })

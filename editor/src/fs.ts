@@ -255,8 +255,9 @@ export async function writeFile(
 export async function importAssets(
   dir: FileSystemDirectoryHandle,
   files: File[],
-): Promise<{ written: string[]; rejected: { name: string; why: string }[] }> {
+): Promise<{ written: string[]; replaced: string[]; rejected: { name: string; why: string }[] }> {
   const written: string[] = []
+  const replaced: string[] = []
   const rejected: { name: string; why: string }[] = []
 
   for (const file of files) {
@@ -274,9 +275,14 @@ export async function importAssets(
       continue
     }
 
+    // getFileHandle without `create` throws if the name doesn't exist yet - the cheapest way to
+    // ask "would this write replace an author's existing art?" before doing it. Not a delete, but
+    // still someone's file being silently clobbered if nobody says so.
+    const existed = await dir.getFileHandle(file.name).then(() => true, () => false)
     await writeFile(dir, file.name, bytes)
     written.push(file.name)
+    if (existed) replaced.push(file.name)
   }
 
-  return { written, rejected }
+  return { written, replaced, rejected }
 }

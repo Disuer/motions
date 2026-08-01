@@ -67,13 +67,28 @@ export function dirtyMotions(dirty: Set<number>): number[] {
 }
 
 /**
- * Which files Save is about to write. This is what the confirmation dialog shows the user and,
- * unchanged, what save() then writes — the last line of defence before anything hits disk, so it
- * is kept pure and separate from the component so a dialog that silently under-reports (worse
- * than no dialog at all) has a test that does not need a browser.
+ * The frozen contents of a confirmation dialog: exactly what save() writes, decided once at the
+ * moment the dialog opens. `indices`/`appearance` are what save() acts on; `files` is what the
+ * dialog displays. Keeping them together is what makes the plan authoritative - save() must
+ * consume this object rather than re-deriving from `dirty`, or a tab edited after the dialog
+ * opened (while nothing on screen blocks that) can join the write having never been shown.
  */
-export function planSave(character: LoadedCharacter, dirty: Set<number>): string[] {
-  const files = dirtyMotions(dirty).map((i) => `motions/${character.motions[i].folder}/animation.json`)
-  if (character.mode === 'appearance') files.push('appearance.json')
-  return files
+export interface SavePlan {
+  indices: number[]
+  appearance: boolean
+  files: string[]
+}
+
+/**
+ * Which files Save is about to write. This is what the confirmation dialog shows the user and
+ * exactly what save() then writes — the last line of defence before anything hits disk, so it is
+ * kept pure and separate from the component so a dialog that silently under-reports (worse than
+ * no dialog at all) has a test that does not need a browser.
+ */
+export function planSave(character: LoadedCharacter, dirty: Set<number>): SavePlan {
+  const indices = dirtyMotions(dirty)
+  const appearance = character.mode === 'appearance'
+  const files = indices.map((i) => `motions/${character.motions[i].folder}/animation.json`)
+  if (appearance) files.push('appearance.json')
+  return { indices, appearance, files }
 }
