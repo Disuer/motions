@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Canvas from './Canvas'
 import {
   LoadedCharacter, Mode, ensurePermission, loadCharacter, nameRejection, pickFolder,
   recallFolder, rememberFolder,
@@ -10,6 +11,11 @@ export default function App() {
   const [character, setCharacter] = useState<LoadedCharacter | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [recalled, setRecalled] = useState<{ handle: FileSystemDirectoryHandle; mode: Mode } | null>(null)
+  const [tab, setTab] = useState(0)
+  const [frameIndex, setFrameIndex] = useState(0)
+  const [onionSkin, setOnionSkin] = useState(true)
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 180 })
 
   useEffect(() => {
     void recallFolder().then(setRecalled)
@@ -102,16 +108,42 @@ export default function App() {
         </p>
       )}
 
-      <ul className="mt-4 space-y-1 text-sm">
-        {character.motions.map((m) => (
-          <li key={m.folder}>
-            <strong>{m.folder}</strong> — {m.spec.frames.length} frames, {m.spec.duration.toFixed(2)}s
-            {!m.hadJson && !m.error && <span className="text-gray-500"> (no animation.json — showing the 12fps default)</span>}
-            {m.error && <span className="text-red-700"> — animation.json rejected: {m.error}</span>}
-          </li>
+      <div className="mt-4 flex gap-1 border-b text-sm">
+        {character.motions.map((m, i) => (
+          <button key={m.folder} onClick={() => { setTab(i); setFrameIndex(0) }}
+                  className={`px-3 py-1 ${i === tab ? 'border-b-2 border-black font-medium' : 'text-gray-600'}`}>
+            {m.folder}
+          </button>
         ))}
-        {character.motions.length === 0 && <li className="text-gray-500">No motions/ folder found.</li>}
-      </ul>
+      </div>
+
+      {character.motions[tab] && (
+        <>
+          <div className="mt-2 flex items-center gap-4 text-xs">
+            <label><input type="checkbox" checked={onionSkin}
+                          onChange={(e) => setOnionSkin(e.target.checked)} /> onion skin</label>
+            <label>zoom <input type="range" min={0.25} max={4} step={0.05} value={zoom}
+                               onChange={(e) => setZoom(Number(e.target.value))} /></label>
+            <span>frame {frameIndex + 1} / {character.motions[tab].spec.frames.length}</span>
+            <button onClick={() => setFrameIndex((i) => Math.max(0, i - 1))}>prev</button>
+            <button onClick={() => setFrameIndex((i) =>
+              Math.min(character.motions[tab].spec.frames.length - 1, i + 1))}>next</button>
+          </div>
+          <div className="mt-2 h-[520px] rounded border">
+            <Canvas
+              spec={character.motions[tab].spec}
+              assets={character.motions[tab].assets}
+              index={frameIndex}
+              onionSkin={onionSkin}
+              zoom={zoom}
+              pan={pan}
+              onPan={setPan}
+              onDragFrame={() => {}}
+            />
+          </div>
+        </>
+      )}
+      {character.motions.length === 0 && <p className="mt-4 text-sm text-gray-500">No motions/ folder found.</p>}
     </main>
   )
 }
