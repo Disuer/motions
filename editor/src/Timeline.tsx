@@ -1,6 +1,17 @@
 import { useRef, useState } from 'react'
 import { AnimationSpec, DEFAULT_FPS } from './spec'
 
+/**
+ * t as a percentage of duration, for a CSS `left`. Duration should always be positive - parseSpec
+ * rejects <= 0 on load, and both places that can set it while editing guard against that - but
+ * this is the one function that actually divides by it, so it doesn't trust either of them: a
+ * non-positive or NaN duration piles every marker at 0% (visibly wrong, an author notices) rather
+ * than computing Infinity or NaN (silently wrong, every marker vanishes to nowhere).
+ */
+export function pct(t: number, duration: number): string {
+  return duration > 0 ? `${(t / duration) * 100}%` : '0%'
+}
+
 interface Props {
   spec: AnimationSpec
   index: number
@@ -44,8 +55,6 @@ export default function Timeline({
     window.addEventListener('pointerup', up)
   }
 
-  const pct = (t: number) => `${(t / spec.duration) * 100}%`
-
   return (
     <div className="border-t p-3">
       <div className="mb-2 flex items-center gap-3 text-xs">
@@ -72,12 +81,12 @@ export default function Timeline({
             title={`frame ${i + 1} — ${f.sprite} @ ${f.t.toFixed(3)}s`}
             className={`absolute top-1 h-6 w-2 -translate-x-1/2 rounded ${
               i === index ? 'bg-black' : 'bg-neutral-400'}`}
-            style={{ left: pct(f.t) }}
+            style={{ left: pct(f.t, spec.duration) }}
           />
         ))}
         {playhead !== null && (
           <div className="pointer-events-none absolute inset-y-0 w-px bg-red-500"
-               style={{ left: pct(playhead) }} />
+               style={{ left: pct(playhead, spec.duration) }} />
         )}
       </div>
 
@@ -89,7 +98,7 @@ export default function Timeline({
             onPointerDown={(e) => drag(e, (t) => onSfxTime(i, t))}
             title={`${s.file} @ ${s.t.toFixed(3)}s`}
             className="absolute top-1 h-4 w-4 -translate-x-1/2 rounded-full bg-emerald-600 text-[8px] text-white"
-            style={{ left: pct(s.t) }}
+            style={{ left: pct(s.t, spec.duration) }}
           />
         ))}
       </div>

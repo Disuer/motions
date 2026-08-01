@@ -52,8 +52,11 @@ export default function Inspector({ spec, index, onFrame, onSpec }: Props) {
 
       <hr className="my-3" />
       <div className="text-xs font-medium">motion</div>
-      <Num label="ppu" value={spec.ppu} step={10} onChange={(v) => onSpec({ ppu: v || 200 })} />
-      <Num label="duration (s)" value={spec.duration} onChange={(v) => onSpec({ duration: v || 0.01 })} />
+      {/* `v || fallback` would let a negative number through (a negative number is truthy);
+          parseSpec rejects ppu/duration <= 0 on load, so this must too, or saving writes a file
+          the editor - and the game - can't reopen. */}
+      <Num label="ppu" value={spec.ppu} step={10} onChange={(v) => onSpec({ ppu: v > 0 ? v : 200 })} />
+      <Num label="duration (s)" value={spec.duration} onChange={(v) => onSpec({ duration: v > 0 ? v : 0.01 })} />
       <label className="flex items-center justify-between gap-2 py-1">
         <span className="text-xs text-gray-600">filter</span>
         <select
