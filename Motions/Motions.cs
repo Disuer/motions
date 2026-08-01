@@ -43,6 +43,37 @@ public class Motions
                         continue;
                     }
 
+                    // Brand-new appearances, rather than overrides of existing ones. Registered
+                    // BEFORE the custom_motions guard below: a mod may define only
+                    // motion_appearances/ and the early 'continue' would otherwise skip it, which
+                    // surfaces much later and far away as "No registered base".
+                    var appearancesRoot = Path.Combine(modPath, "motion_appearances");
+                    if (Directory.Exists(appearancesRoot))
+                    {
+                        foreach (var appDir in Directory.GetDirectories(appearancesRoot))
+                        {
+                            string folderName = Path.GetFileName(appDir);
+
+                            // Lethe truncates any ID containing "Appearance" (Lethe/Patches/Skin.cs),
+                            // so such a name would silently resolve to the wrong appearance later.
+                            if (folderName.Contains("Appearance"))
+                            {
+                                Logger.LogError($"[Appearance] Folder '{folderName}' cannot contain " +
+                                                "\"Appearance\" in its name. Rename it.");
+                                continue;
+                            }
+
+                            string donor = AppearanceRegistry.ReadBase(appDir);
+                            if (donor == null) continue;
+
+                            string customID = AppearanceRegistry.Prefix + folderName;
+                            MotionData.CustomAppearanceBases[customID] = donor;
+                            RegisterCharacterFolder(appDir, customID);
+
+                            Logger.LogWarning($"[Appearance] Registered '{customID}' cloning '{donor}'.");
+                        }
+                    }
+
                     var motionsRoot = Path.Combine(modPath, "custom_motions");
                     if (!Directory.Exists(motionsRoot)) continue;
                     // directory custom_motions:
@@ -107,34 +138,6 @@ public class Motions
                             }
                         string appearanceID = Path.GetFileName(charDir);
                         RegisterCharacterFolder(charDir, appearanceID);
-                    }
-
-                    // Brand-new appearances, rather than overrides of existing ones.
-                    var appearancesRoot = Path.Combine(modPath, "motion_appearances");
-                    if (Directory.Exists(appearancesRoot))
-                    {
-                        foreach (var appDir in Directory.GetDirectories(appearancesRoot))
-                        {
-                            string folderName = Path.GetFileName(appDir);
-
-                            // Lethe truncates any ID containing "Appearance" (Lethe/Patches/Skin.cs),
-                            // so such a name would silently resolve to the wrong appearance later.
-                            if (folderName.Contains("Appearance"))
-                            {
-                                Logger.LogError($"[Appearance] Folder '{folderName}' cannot contain " +
-                                                "\"Appearance\" in its name. Rename it.");
-                                continue;
-                            }
-
-                            string donor = AppearanceRegistry.ReadBase(appDir);
-                            if (donor == null) continue;
-
-                            string customID = AppearanceRegistry.Prefix + folderName;
-                            MotionData.CustomAppearanceBases[customID] = donor;
-                            RegisterCharacterFolder(appDir, customID);
-
-                            Logger.LogWarning($"[Appearance] Registered '{customID}' cloning '{donor}'.");
-                        }
                     }
                 }
                 break;

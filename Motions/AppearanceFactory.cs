@@ -24,7 +24,15 @@ public static class AppearanceFactory
         {
             if (!MotionData.CustomAppearanceBases.TryGetValue(appearanceID, out string donorID))
             {
-                Logger.LogError($"[Appearance] No registered base for '{appearanceID}'.");
+                // Returning null here crashes the game a few frames later, inside BattleUnitView.Init
+                // with an index-out-of-range that names nothing useful - so this message is the only
+                // chance to say what actually went wrong. Listing what IS registered distinguishes
+                // "typo in the ID" from "discovery never ran for this mod".
+                string known = MotionData.CustomAppearanceBases.Count == 0
+                    ? "(none registered at all - is there a motion_appearances/ folder, and does it contain appearance.json?)"
+                    : string.Join(", ", MotionData.CustomAppearanceBases.Keys);
+
+                Logger.LogError($"[Appearance] No registered base for '{appearanceID}'. Registered: {known}");
                 return null;
             }
 
