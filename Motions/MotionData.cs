@@ -40,6 +40,9 @@ public static class MotionData
     /// <summary>Appearances with at least one sprite motion, so the gates can ask without scanning.</summary>
     public static readonly HashSet<string> SpriteMotionAppearances = new();
 
+    /// <summary>Empty fixed-length timelines that exist only to give the slave director a clock.</summary>
+    public static readonly Dictionary<MotionKey, TimelineAsset> ClockTimelines = new();
+
     // ---- JSON definition registry -----------------------------------------
 
     /// <summary>appearanceID -> (MOTION_DETAIL -> jsonPath)</summary>

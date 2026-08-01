@@ -179,20 +179,55 @@ public static class MotionInjector
 
         var key = MotionKey.Create(appearanceID, motiondetail, index);
 
-        // GetOrCacheTimeline populates SoundCueCache/VfxCueCache as a side effect,
-        // so reading caches after this call is safe.
-        TimelineAsset customTimeline = CueExtractor.GetOrCacheTimeline(appearanceID, motiondetail, index);
+        MotionData.SpriteMotions.TryGetValue(key, out var spriteMotion);
+
+        TimelineAsset customTimeline;
+
+        if (spriteMotion != null)
+        {
+            // An empty fixed-length timeline: the slave director needs a playableAsset to have a
+            // clock, but nothing on it should play. Frames are stepped in SidecarSyncBehavior.
+            if (!MotionData.ClockTimelines.TryGetValue(key, out customTimeline) || customTimeline == null)
+            {
+                customTimeline = ScriptableObject.CreateInstance<TimelineAsset>();
+                customTimeline.name = $"SpriteClock_{motiondetail}_{index}";
+                customTimeline.durationMode = TimelineAsset.DurationMode.FixedLength;
+                customTimeline.fixedDuration = spriteMotion.Duration;
+                MotionData.ClockTimelines[key] = customTimeline;
+            }
+
+            syncScript.Frames = spriteMotion.Sprites;
+            syncScript.FrameTimes = spriteMotion.Times;
+            syncScript.ResetFrameCursor();
+        }
+        else
+        {
+            // GetOrCacheTimeline populates SoundCueCache/VfxCueCache as a side effect,
+            // so reading caches after this call is safe.
+            customTimeline = CueExtractor.GetOrCacheTimeline(appearanceID, motiondetail, index);
+
+            // Must be cleared, or a previous sprite motion's frames keep rendering over a bundle one.
+            syncScript.Frames = null;
+            syncScript.FrameTimes = null;
+        }
 
         // ---- Sound cues ----
         syncScript.SoundCues.Clear();
-        if (MotionData.SoundCueCache.TryGetValue(key, out var cues))
-        {
-            if (syncScript.SoundCues.Capacity < cues.Count)
-                syncScript.SoundCues.Capacity = cues.Count;
 
-            for (int i = 0; i < cues.Count; i++)
+        var cueSource = spriteMotion != null
+            ? spriteMotion.Sounds
+            : (MotionData.SoundCueCache.TryGetValue(key, out var cached) ? cached : null);
+
+        if (cueSource != null)
+        {
+            if (syncScript.SoundCues.Capacity < cueSource.Count)
+                syncScript.SoundCues.Capacity = cueSource.Count;
+
+            // Copied, not shared: SoundCue is a struct carrying Triggered and ActiveChannel, and
+            // the cached list is reused on every play of the motion.
+            for (int i = 0; i < cueSource.Count; i++)
             {
-                var c = cues[i];
+                var c = cueSource[i];
                 syncScript.SoundCues.Add(new SoundCue
                 {
                     StartTime = c.StartTime,

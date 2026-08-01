@@ -129,6 +129,21 @@ public static class SpriteMotionLoader
             var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), pivot, (float)effectivePpu);
             sprite.name = frame.sprite;
 
+            // Loading happens in a LoadScene PREFIX, so the battle scene load is still ahead of us,
+            // and a runtime-created asset with no scene owner gets collected by the automatic
+            // Resources.UnloadUnusedAssets() during it. The symptom is not an error: the renderer
+            // stays enabled with a valid material and simply draws nothing, because assigning a
+            // destroyed Unity object reads back as null.
+            //
+            // hideFlags is the load-bearing line - it carries DontUnloadUnusedAsset. DontDestroyOnLoad
+            // alone was tried and does NOT protect assets; it is kept only because it costs a line and
+            // this cost three test cycles to find. Assets flagged this way are never auto-collected,
+            // so MotionData.UnloadAll must Destroy them explicitly.
+            tex.hideFlags = HideFlags.HideAndDontSave;
+            sprite.hideFlags = HideFlags.HideAndDontSave;
+            UnityEngine.Object.DontDestroyOnLoad(tex);
+            UnityEngine.Object.DontDestroyOnLoad(sprite);
+
             sprites.Add(sprite);
             textures.Add(tex);
             times.Add(frame.t);
