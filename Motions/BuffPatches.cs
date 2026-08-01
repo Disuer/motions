@@ -1,9 +1,4 @@
 ﻿using HarmonyLib;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 
 namespace Motions
@@ -15,33 +10,26 @@ namespace Motions
         public static void TriggerBuffVFX(BattleUnitView __instance, AbilityTriggeredData triggerdData)
         {
             Logger.LogInfo("[VIEWABILITYTYPOPATCH] Entered patch");
+
             BuffTypo typo = null;
             triggerdData.GetBuffData(out typo);
-            if (typo == null) return;
-            BUFF_UNIQUE_KEYWORD keyword = typo.GetBuffKeyword();
-            Logger.LogInfo($"[VIEWABILITYTYPO] Instance this time is {keyword} (tostring) {keyword.ToString()}");
-            if (!MotionData.CreatedAbilityEffects.TryGetValue(keyword, out var cachedAbility))
-            {
+            if (typo == null)
                 return;
-            }
 
-            Effect_Ability existing = null;
+            BUFF_UNIQUE_KEYWORD keyword = typo.GetBuffKeyword();
+            Logger.LogInfo($"[VIEWABILITYTYPO] Instance this time is {keyword}");
 
-            foreach (var effect in __instance._effects_ability)
-            {
-                if (effect.keyword == keyword)
-                {
-                    existing = effect;
-                    break;
-                }
-            }
+            if (!MotionData.CreatedAbilityEffects.TryGetValue(keyword, out var cachedAbility))
+                return;
 
-            if (existing != null)
+            Effect_Label existing = null;
+
+            if (__instance._effects_ability.TryGetValue(keyword, out existing))
             {
                 if (existing.effectObj == null)
                 {
                     Logger.LogWarning($"Existing effect ability {(int)keyword} had a destroyed GameObject, recreating.");
-                    __instance._effects_ability.Remove(existing);
+                    __instance._effects_ability.Remove(keyword);
                     existing = null;
                 }
                 else if (existing.effectObj.activeSelf)
@@ -65,8 +53,8 @@ namespace Motions
                 }
             }
 
-            // mimic the og effect ability methods and set ability
-            GameObject instance = UnityEngine.Object.Instantiate(cachedAbility.effectObj);
+            GameObject instance = Object.Instantiate(cachedAbility.effectObj);
+
             var ability = new Effect_Ability
             {
                 keyword = cachedAbility.keyword,
@@ -74,15 +62,18 @@ namespace Motions
                 IsSetOverrideDie = cachedAbility.IsSetOverrideDie
             };
 
-            instance.transform.SetParent(cachedAbility.effectObj.name.EndsWith("_Front")
-                ? __instance.viewEffectRootDirection
-                : __instance.viewEffectRootBack);
+            instance.transform.SetParent(
+                cachedAbility.effectObj.name.EndsWith("_Front")
+                    ? __instance.viewEffectRootDirection
+                    : __instance.viewEffectRootBack);
+
             instance.transform.localPosition = Vector3.zero;
             instance.transform.localRotation = Quaternion.identity;
             instance.transform.localScale =
                 Vector3.one * __instance.Appearance.charInfo.transform_Height.localPosition.y * 0.25f;
 
-            __instance._effects_ability.Add(ability);
+            __instance._effects_ability.Add(keyword, (Effect_Label)ability);
+
             instance.SetActive(false);
             instance.SetActive(true);
         }

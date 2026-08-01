@@ -49,17 +49,14 @@ namespace Motions
             foreach (BuffInfo buff in buffInfo)
             {
                 if (!buff.IsKeyword(keyword))
-                {
                     continue;
-                }
 
                 if (buff._stack < stackThreshold || buff._turn < turnThreshold)
-                {
                     return false;
-                }
 
                 return true;
             }
+
             return false;
         }
 
@@ -72,7 +69,7 @@ namespace Motions
             MotionData.CustomAppearanceVFX.TryGetValue(appearanceID, out string jsonPath);
             var parsed = jsonPath != null ? Parse(jsonPath) : null;
 
-            MotionData.AppearanceVFXCache[appearanceID] = parsed; // negative results cached too
+            MotionData.AppearanceVFXCache[appearanceID] = parsed;
             return parsed;
         }
 
@@ -129,8 +126,6 @@ namespace Motions
         public static void CharacterAppearanceVFXHandler(BattleUnitView __instance, AbilityTriggeredData triggerdData)
             => SyncVFX(__instance);
 
-        // Buffs that lapse or drop below their threshold never raise a typo, so the aura would stay
-        // up until the next unrelated trigger. Re-sync at round start to catch that.
         [HarmonyPatch(typeof(BattleUnitView), nameof(BattleUnitView.OnRoundStart))]
         [HarmonyPostfix]
         public static void CharacterAppearanceVFXRoundStart(BattleUnitView __instance)
@@ -148,32 +143,27 @@ namespace Motions
 
             var allAttr = characterVFX.allVFX;
 
-            foreach (var keywordGroup in allAttr.GroupBy(x => x.keyword)) // this groups all entries via keyword to select dominant entries for each keyword to be utilized, higher ints = more dominant (might add dominance field later)
+            foreach (var keywordGroup in allAttr.GroupBy(x => x.keyword))
             {
                 BUFF_UNIQUE_KEYWORD keyword = CustomBuffs.ParseBuffUniqueKeyword(keywordGroup.Key);
                 CharVFX selected = null;
 
-                foreach (var entry in keywordGroup) // select dominant entry to be prioritized
+                foreach (var entry in keywordGroup)
                 {
                     if (!SatisfiesVFXRequirement(entry.stackThres, entry.turnThres, keyword, __instance.unitModel))
                         continue;
 
-                    if (selected == null || entry.stackThres > selected.stackThres || (entry.stackThres == selected.stackThres && entry.turnThres > selected.turnThres))
+                    if (selected == null ||
+                        entry.stackThres > selected.stackThres ||
+                        (entry.stackThres == selected.stackThres && entry.turnThres > selected.turnThres))
                     {
                         selected = entry;
                     }
                 }
 
-                // copy pasted checks from buff patch
-                Effect_Ability existing = null;
-                foreach (var effect in __instance._effects_ability)
-                {
-                    if (effect.keyword == keyword)
-                    {
-                        existing = effect;
-                        break;
-                    }
-                }
+                Effect_Label existing = null;
+                __instance._effects_ability.TryGetValue(keyword, out existing);
+
                 if (selected == null)
                 {
                     if (existing != null && existing.effectObj != null)
@@ -181,6 +171,7 @@ namespace Motions
 
                     continue;
                 }
+
                 if (!selected.active)
                 {
                     if (existing != null && existing.effectObj != null)
@@ -188,11 +179,12 @@ namespace Motions
 
                     continue;
                 }
+
                 if (existing != null)
                 {
                     if (existing.effectObj == null)
                     {
-                        __instance._effects_ability.Remove(existing);
+                        __instance._effects_ability.Remove(keyword);
                         existing = null;
                     }
                     else
@@ -212,17 +204,13 @@ namespace Motions
                     }
                 }
 
-                // find prefab for dominant entry
                 GameObject prefab = GetPrefab(appearanceID, selected.vfxName);
 
                 if (prefab == null)
                     continue;
 
-                // Instantiate renames the clone to "<name>(Clone)", so the front/back check has to
-                // read the source prefab's name, not the instance's.
                 bool isFront = prefab.name.EndsWith("_Front", StringComparison.OrdinalIgnoreCase);
 
-                // copy paste from buff
                 GameObject charVfxInstance = UnityEngine.Object.Instantiate(prefab);
 
                 charVfxInstance.transform.SetParent(
@@ -235,17 +223,18 @@ namespace Motions
                 charVfxInstance.transform.localScale =
                     Vector3.one * __instance.Appearance.charInfo.transform_Height.localPosition.y * 0.25f;
 
-                __instance._effects_ability.Add(new Effect_Ability
+                var ability = new Effect_Ability
                 {
                     keyword = keyword,
                     effectObj = charVfxInstance,
                     IsSetOverrideDie = false
-                });
+                };
+
+                __instance._effects_ability.Add(keyword, (Effect_Label)ability);
 
                 charVfxInstance.SetActive(false);
                 charVfxInstance.SetActive(true);
             }
         }
-
     }
 }
