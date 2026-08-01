@@ -50,8 +50,9 @@ public static class MotionInjector
             bool anySpriteCoin = false;
             for (int coin = 0; coin < coinDurations.Length; coin++)
             {
-                if (MotionData.SpriteMotions.TryGetValue(
-                        MotionKey.Create(appearanceID, motionDetail, coin), out var sm))
+                // Falls back to coin 0, so every coin of a multi-coin skill gets the right length
+                // even when only one folder was supplied.
+                if (MotionData.TryGetSpriteMotion(appearanceID, motionDetail, coin, out var sm))
                 {
                     coinDurations[coin] = sm.Duration;
                     anySpriteCoin = true;
@@ -194,7 +195,7 @@ public static class MotionInjector
 
         var key = MotionKey.Create(appearanceID, motiondetail, index);
 
-        MotionData.SpriteMotions.TryGetValue(key, out var spriteMotion);
+        MotionData.TryGetSpriteMotion(appearanceID, motiondetail, index, out var spriteMotion);
 
         TimelineAsset customTimeline;
 
