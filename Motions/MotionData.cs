@@ -32,6 +32,14 @@ public static class MotionData
 
     public static readonly Dictionary<string, List<AssetBundle>> LoadedAssets = new();
 
+    // ---- Bundle-free sprite motions ---------------------------------------
+
+    /// <summary>Sprite motions loaded from motions/&lt;Motion&gt;/ folders, keyed like TimelineCache.</summary>
+    public static readonly Dictionary<MotionKey, SpriteMotion> SpriteMotions = new();
+
+    /// <summary>Appearances with at least one sprite motion, so the gates can ask without scanning.</summary>
+    public static readonly HashSet<string> SpriteMotionAppearances = new();
+
     // ---- JSON definition registry -----------------------------------------
 
     /// <summary>appearanceID -> (MOTION_DETAIL -> jsonPath)</summary>
@@ -79,6 +87,9 @@ public static class MotionData
 
     public static bool HasBundle(string appearanceID)
         => LoadedAssets.ContainsKey(appearanceID);
+
+    public static bool HasSpriteMotion(string appearanceID)
+        => SpriteMotionAppearances.Contains(appearanceID);
 
     public static bool HasBundleBuff(string buffID) => LoadedAssets.ContainsKey(buffID);
 

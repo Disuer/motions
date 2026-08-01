@@ -193,3 +193,17 @@ public class Vec3Data
         return new Vector3(x, y, z);
     }
 }
+
+/// <summary>
+/// A bundle-free motion: sprites already built with their offset and scale baked into the pivot,
+/// plus the times they step at. Parallel arrays because this is read every frame.
+/// </summary>
+public class SpriteMotion
+{
+    public double Duration;
+    public Sprite[] Sprites;
+    public double[] Times;
+    /// <summary>Held only so UnloadAll can Destroy them; nothing else reads this.</summary>
+    public Texture2D[] Textures;
+    public System.Collections.Generic.List<SoundCue> Sounds;
+}
