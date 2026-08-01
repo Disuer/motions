@@ -22,7 +22,8 @@ public static class SpriteMotionLoader
             foreach (string motionDir in Directory.GetDirectories(motionsRoot))
             {
                 string folderName = Path.GetFileName(motionDir);
-                var (name, index) = SpriteMotionSpec.ParseFolderName(folderName);
+                var (name, index) = SpriteMotionSpec.ParseFolderName(
+                    folderName, n => Enum.TryParse<MOTION_DETAIL>(n, true, out _));
 
                 if (!Enum.TryParse<MOTION_DETAIL>(name, true, out var detail))
                 {

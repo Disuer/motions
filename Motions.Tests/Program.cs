@@ -28,6 +28,15 @@ static class Program
               "Parrying_Success keeps its underscore");
         Check(SpriteMotionSpec.ParseFolderName("S1_") == ("S1_", 0), "trailing underscore is not an index");
         Check(SpriteMotionSpec.ParseFolderName("S1_-2") == ("S1_-2", 0), "negative suffix is not an index");
+        // Damaged_2 and Damaged_3 are real MOTION_DETAIL values. Without the predicate the
+        // _N rule eats them and the loader drops a legitimate motion folder on the floor.
+        Func<string, bool> known = n => n == "Damaged" || n == "Damaged_2" || n == "S1";
+        Check(SpriteMotionSpec.ParseFolderName("Damaged_2", known) == ("Damaged_2", 0),
+              "a known whole name beats the _N rule");
+        Check(SpriteMotionSpec.ParseFolderName("S1_1", known) == ("S1", 1),
+              "an unknown whole name still splits into a coin index");
+        Check(SpriteMotionSpec.ParseFolderName("S1_1") == ("S1", 1),
+              "no predicate behaves exactly as before");
 
         Console.WriteLine("CompareNatural");
         var names = new List<string> { "frame_10.png", "frame_2.png", "frame_1.png" };

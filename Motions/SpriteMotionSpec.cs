@@ -58,9 +58,18 @@ public static class SpriteMotionSpec
     /// "S1_1" -> ("S1", 1). The suffix counts as an index only if it parses as a non-negative
     /// integer, so motion names that legitimately contain underscores survive intact.
     /// </summary>
-    public static (string name, int index) ParseFolderName(string folderName)
+    /// <param name="isKnownName">
+    /// Optional test for "is this whole string already a motion name?". Damaged_2 and Damaged_3
+    /// are real MOTION_DETAIL values, so a whole-name match has to beat the _N rule or the loader
+    /// treats them as coin variants of Damaged and skips them. Passed in rather than looked up
+    /// here because this file must stay free of MOTION_DETAIL - see Motions.Tests.csproj.
+    /// </param>
+    public static (string name, int index) ParseFolderName(string folderName,
+                                                           Func<string, bool> isKnownName = null)
     {
         if (string.IsNullOrEmpty(folderName)) return (folderName, 0);
+
+        if (isKnownName != null && isKnownName(folderName)) return (folderName, 0);
 
         int cut = folderName.LastIndexOf('_');
         if (cut <= 0 || cut == folderName.Length - 1) return (folderName, 0);
