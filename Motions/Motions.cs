@@ -63,9 +63,9 @@ public class Motions
                                 continue;
                             }
 
+                            // ReadBase never returns null - a folder of PNGs and nothing else is a
+                            // valid mod, and it falls back to a default donor rather than failing.
                             string donor = AppearanceRegistry.ReadBase(appDir);
-                            if (donor == null) continue;
-
                             string customID = AppearanceRegistry.Prefix + folderName;
                             MotionData.CustomAppearanceBases[customID] = donor;
                             RegisterCharacterFolder(appDir, customID);
