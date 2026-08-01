@@ -333,7 +333,7 @@ public static class TimelineBuilder
     /// Clones the original timeline, keeps it intact, but prunes the contents of specific tracks.
     /// Returns a list of timelines, one for each coin, with graduated hitmarkers.
     /// </summary>
-    public static System.Collections.Generic.List<TimelineAsset> GetTimelines(string timelineName, string jsonPath, TimelineAsset bundleTimeline = null, string appearanceID = null, System.Collections.Generic.List<TrackAsset> originalVfxTracks = null, int variantIndex = 0)
+    public static System.Collections.Generic.List<TimelineAsset> GetTimelines(string timelineName, string jsonPath, TimelineAsset bundleTimeline = null, string appearanceID = null, System.Collections.Generic.List<TrackAsset> originalVfxTracks = null, int variantIndex = 0, double?[] coinDurations = null)
     {
         // 1. Load JSON data
         SkillData data = LoadSkillData(jsonPath);
@@ -344,14 +344,31 @@ public static class TimelineBuilder
         // game's default logic and keeps the bundle's own timeline injectable.
         if (data == null || data.coins == null || data.coins.Length == 0)
         {
+            // The common case for a sprite-only mod: PNGs and no S1.json at all.
+            double fallback = 1.0;
+            if (bundleTimeline != null) fallback = bundleTimeline.duration;
+
+            bool fromSpriteMotion = coinDurations != null && coinDurations.Length > 0 && coinDurations[0].HasValue;
+            if (fromSpriteMotion) fallback = coinDurations[0].Value;
+
+            // The hit checker is where the coin may hand off, so the usual 0.15 default silently
+            // truncates the animation to 15% of its length. A bundle author has a timeline in front
+            // of them and learns this; someone who dropped PNGs in a folder just sees their two-second
+            // animation stop after a third of a second, with nothing logged. So when the length came
+            // from a sprite motion and there is no JSON to say otherwise, hand off at the end instead.
+            // Writing an explicit hitCheckers array still overrides this, and bundles are untouched.
+            var defaultHitCheckers = fromSpriteMotion
+                ? new HitCheckerData[] { new HitCheckerData { time = 1.0, isNextMotionCoinDelay = 0f } }
+                : new HitCheckerData[0];
+
             data ??= new SkillData();
             data.coins = new CoinData[]
             {
                 new CoinData
                 {
-                    totalDuration = bundleTimeline != null ? bundleTimeline.duration : 1.0,
+                    totalDuration = fallback,
                     phases = new SkillPhase[0],
-                    hitCheckers = new HitCheckerData[0]
+                    hitCheckers = defaultHitCheckers
                 }
             };
         }
@@ -363,6 +380,10 @@ public static class TimelineBuilder
             double targetDuration = coinData.totalDuration;
             if (bundleTimeline != null)
                 targetDuration = bundleTimeline.duration;
+
+            // A sprite motion is what actually plays, so its length wins over both.
+            if (coinDurations != null && coinIdx < coinDurations.Length && coinDurations[coinIdx].HasValue)
+                targetDuration = coinDurations[coinIdx].Value;
 
             TimelineAsset dummyTimeline = ScriptableObject.CreateInstance<TimelineAsset>();
             dummyTimeline.name = $"{NamePrefix}{timelineName}_Var{variantIndex}_Coin_{coinIdx}";

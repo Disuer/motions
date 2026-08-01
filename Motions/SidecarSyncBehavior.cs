@@ -29,6 +29,14 @@ public class SidecarSyncBehavior : MonoBehaviour
     public bool IsModdedSkillActive = false;
     public bool ShouldSync = true;
 
+    /// <summary>Bundle-free playback. Null when the motion came from a bundle.</summary>
+    public Sprite[] Frames;
+    public double[] FrameTimes;
+    private int _frameCursor;
+
+    /// <summary>Called when a new motion starts so the cursor does not carry over.</summary>
+    public void ResetFrameCursor() => _frameCursor = 0;
+
 
     private Transform GetFirstTargetTransform()
     {
@@ -100,6 +108,23 @@ public class SidecarSyncBehavior : MonoBehaviour
                 SlaveDirector.time = MasterDirector.time;
                 SlaveDirector.Evaluate();
             }
+        }
+
+        // ---- Sprite frames (bundle-free motions) ----
+        if (IsModdedSkillActive && Frames != null && Frames.Length > 0 && SlaveDirector != null)
+        {
+            double t = SlaveDirector.time;
+
+            // Looping motions wrap back to 0; the cursor only walks forward otherwise, so this is
+            // O(1) amortised rather than a search. SpriteMotionSpec.FrameIndexAt encodes the same
+            // rule declaratively and is what the tests pin.
+            if (_frameCursor >= Frames.Length || t < FrameTimes[_frameCursor])
+                _frameCursor = 0;
+
+            while (_frameCursor + 1 < Frames.Length && FrameTimes[_frameCursor + 1] <= t)
+                _frameCursor++;
+
+            SandboxRenderer.sprite = Frames[_frameCursor];
         }
 
         // ---- Sound cues ----

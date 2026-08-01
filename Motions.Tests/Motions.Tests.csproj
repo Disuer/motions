@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net6.0</TargetFramework>
+    <RootNamespace>Motions.Tests</RootNamespace>
+    <AssemblyName>Motions.Tests</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0649</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <!-- Links exactly one plugin source file. SpriteMotionSpec.cs must never reference
+         UnityEngine or interop types; if it starts to, this project stops compiling,
+         which is the point. -->
+    <Compile Include="..\Motions\SpriteMotionSpec.cs" Link="SpriteMotionSpec.cs" />
+  </ItemGroup>
+</Project>

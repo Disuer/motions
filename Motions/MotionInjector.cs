@@ -43,10 +43,26 @@ public static class MotionInjector
                 }
             }
 
+            // Coin N of this motion lives in folder '<Motion>_N'; MotionKey.Create folds 0 to -1.
+            // 16 is a ceiling well above any real skill's coin count, so probing a fixed range
+            // avoids a second discovery pass.
+            var coinDurations = new double?[16];
+            bool anySpriteCoin = false;
+            for (int coin = 0; coin < coinDurations.Length; coin++)
+            {
+                // Falls back to coin 0, so every coin of a multi-coin skill gets the right length
+                // even when only one folder was supplied.
+                if (MotionData.TryGetSpriteMotion(appearanceID, motionDetail, coin, out var sm))
+                {
+                    coinDurations[coin] = sm.Duration;
+                    anySpriteCoin = true;
+                }
+            }
+
             var customTimelines = new System.Collections.Generic.List<TimelineAsset>();
             for (int variant = 0; variant < bundleTimelines.Count; variant++)
             {
-                var built = TimelineBuilder.GetTimelines(motionName, jsonPath, bundleTimelines[variant], appearanceID, allVfxTracks, variant);
+                var built = TimelineBuilder.GetTimelines(motionName, jsonPath, bundleTimelines[variant], appearanceID, allVfxTracks, variant, anySpriteCoin ? coinDurations : null);
                 if (built != null)
                     customTimelines.AddRange(built);
             }
@@ -88,7 +104,8 @@ public static class MotionInjector
             string appearanceID = forcedID ?? character.charInfo.appearanceID;
             TimelineAsset customTimeline = MotionData.FindTimelineForAppearance(appearanceID);
 
-            if (customTimeline == null) return;
+            // A sprite motion has no TimelineAsset to find, so the bundle check alone would bail out.
+            if (customTimeline == null && !MotionData.HasSpriteMotion(appearanceID)) return;
 
             GameObject sandboxObj = new("Motions_Sandbox_Test");
             sandboxObj.transform.SetParent(character.transform);
@@ -164,7 +181,8 @@ public static class MotionInjector
 
         var sandboxTransform = appearance.transform.FindChild("Motions_Sandbox_Test");
 
-        if (sandboxTransform == null && MotionData.HasBundle(appearanceID))
+        if (sandboxTransform == null &&
+            (MotionData.HasBundle(appearanceID) || MotionData.HasSpriteMotion(appearanceID)))
         {
             AttachSidecar(appearance, appearanceID);
             sandboxTransform = appearance.transform.FindChild("Motions_Sandbox_Test");
@@ -177,20 +195,55 @@ public static class MotionInjector
 
         var key = MotionKey.Create(appearanceID, motiondetail, index);
 
-        // GetOrCacheTimeline populates SoundCueCache/VfxCueCache as a side effect,
-        // so reading caches after this call is safe.
-        TimelineAsset customTimeline = CueExtractor.GetOrCacheTimeline(appearanceID, motiondetail, index);
+        MotionData.TryGetSpriteMotion(appearanceID, motiondetail, index, out var spriteMotion);
+
+        TimelineAsset customTimeline;
+
+        if (spriteMotion != null)
+        {
+            // An empty fixed-length timeline: the slave director needs a playableAsset to have a
+            // clock, but nothing on it should play. Frames are stepped in SidecarSyncBehavior.
+            if (!MotionData.ClockTimelines.TryGetValue(key, out customTimeline) || customTimeline == null)
+            {
+                customTimeline = ScriptableObject.CreateInstance<TimelineAsset>();
+                customTimeline.name = $"SpriteClock_{motiondetail}_{index}";
+                customTimeline.durationMode = TimelineAsset.DurationMode.FixedLength;
+                customTimeline.fixedDuration = spriteMotion.Duration;
+                MotionData.ClockTimelines[key] = customTimeline;
+            }
+
+            syncScript.Frames = spriteMotion.Sprites;
+            syncScript.FrameTimes = spriteMotion.Times;
+            syncScript.ResetFrameCursor();
+        }
+        else
+        {
+            // GetOrCacheTimeline populates SoundCueCache/VfxCueCache as a side effect,
+            // so reading caches after this call is safe.
+            customTimeline = CueExtractor.GetOrCacheTimeline(appearanceID, motiondetail, index);
+
+            // Must be cleared, or a previous sprite motion's frames keep rendering over a bundle one.
+            syncScript.Frames = null;
+            syncScript.FrameTimes = null;
+        }
 
         // ---- Sound cues ----
         syncScript.SoundCues.Clear();
-        if (MotionData.SoundCueCache.TryGetValue(key, out var cues))
-        {
-            if (syncScript.SoundCues.Capacity < cues.Count)
-                syncScript.SoundCues.Capacity = cues.Count;
 
-            for (int i = 0; i < cues.Count; i++)
+        var cueSource = spriteMotion != null
+            ? spriteMotion.Sounds
+            : (MotionData.SoundCueCache.TryGetValue(key, out var cached) ? cached : null);
+
+        if (cueSource != null)
+        {
+            if (syncScript.SoundCues.Capacity < cueSource.Count)
+                syncScript.SoundCues.Capacity = cueSource.Count;
+
+            // Copied, not shared: SoundCue is a struct carrying Triggered and ActiveChannel, and
+            // the cached list is reused on every play of the motion.
+            for (int i = 0; i < cueSource.Count; i++)
             {
-                var c = cues[i];
+                var c = cueSource[i];
                 syncScript.SoundCues.Add(new SoundCue
                 {
                     StartTime = c.StartTime,

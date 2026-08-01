@@ -32,6 +32,20 @@ public static class MotionData
 
     public static readonly Dictionary<string, List<AssetBundle>> LoadedAssets = new();
 
+    // ---- Bundle-free sprite motions ---------------------------------------
+
+    /// <summary>Sprite motions loaded from motions/&lt;Motion&gt;/ folders, keyed like TimelineCache.</summary>
+    public static readonly Dictionary<MotionKey, SpriteMotion> SpriteMotions = new();
+
+    /// <summary>Appearances with at least one sprite motion, so the gates can ask without scanning.</summary>
+    public static readonly HashSet<string> SpriteMotionAppearances = new();
+
+    /// <summary>Empty fixed-length timelines that exist only to give the slave director a clock.</summary>
+    public static readonly Dictionary<MotionKey, TimelineAsset> ClockTimelines = new();
+
+    /// <summary>"!motions_MyGuy" -> the vanilla appearance ID cloned to build it.</summary>
+    public static readonly Dictionary<string, string> CustomAppearanceBases = new();
+
     // ---- JSON definition registry -----------------------------------------
 
     /// <summary>appearanceID -> (MOTION_DETAIL -> jsonPath)</summary>
@@ -79,6 +93,28 @@ public static class MotionData
 
     public static bool HasBundle(string appearanceID)
         => LoadedAssets.ContainsKey(appearanceID);
+
+    public static bool HasSpriteMotion(string appearanceID)
+        => SpriteMotionAppearances.Contains(appearanceID);
+
+    /// <summary>
+    /// Sprite motion for this coin, falling back to the motion's first coin when there is no
+    /// per-coin folder. A multi-coin skill restarts the motion on every coin, so without this a
+    /// single S1/ folder animates coin one and leaves the rest blank. Supplying S1_1/, S1_2/ is
+    /// how you give each coin its own animation; supplying only S1/ reuses it for all of them.
+    /// Bundles keep their stricter behaviour — a missing coin asset there means no custom motion.
+    /// </summary>
+    public static bool TryGetSpriteMotion(string appearanceID, MOTION_DETAIL detail, int index, out SpriteMotion motion)
+    {
+        if (SpriteMotions.TryGetValue(MotionKey.Create(appearanceID, detail, index), out motion))
+            return true;
+
+        if (index > 0 && SpriteMotions.TryGetValue(MotionKey.Create(appearanceID, detail, 0), out motion))
+            return true;
+
+        motion = null;
+        return false;
+    }
 
     public static bool HasBundleBuff(string buffID) => LoadedAssets.ContainsKey(buffID);
 
@@ -283,6 +319,25 @@ public static class MotionData
             Logger.LogWarning($"Unloading buff bundle {bundle.name}");
             bundle.Unload(false);
         }
+        // Runtime-created sprites and textures have no bundle to unload them, and they carry
+        // HideFlags.HideAndDontSave so Unity will never collect them either. Without this every
+        // battle transition leaks the whole sprite set.
+        foreach (var motion in SpriteMotions.Values)
+        {
+            if (motion == null) continue;
+
+            if (motion.Sprites != null)
+                foreach (var sprite in motion.Sprites)
+                    if (sprite != null) UnityEngine.Object.Destroy(sprite);
+
+            if (motion.Textures != null)
+                foreach (var tex in motion.Textures)
+                    if (tex != null) UnityEngine.Object.Destroy(tex);
+        }
+
+        foreach (var clock in ClockTimelines.Values)
+            if (clock != null) UnityEngine.Object.Destroy(clock);
+
         Logger.LogWarning("Unloading and clearing all custom motions and bundles.");
         LoadedAssets.Clear();
         ScreenBorderPatches.Unload();
@@ -297,5 +352,9 @@ public static class MotionData
         VfxCueCache.Clear();
         TimelineCache.Clear();
         ProcessedTimelines.Clear();
+        SpriteMotions.Clear();
+        SpriteMotionAppearances.Clear();
+        ClockTimelines.Clear();
+        CustomAppearanceBases.Clear();
     }
 }

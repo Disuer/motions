@@ -43,6 +43,37 @@ public class Motions
                         continue;
                     }
 
+                    // Brand-new appearances, rather than overrides of existing ones. Registered
+                    // BEFORE the custom_motions guard below: a mod may define only
+                    // motion_appearances/ and the early 'continue' would otherwise skip it, which
+                    // surfaces much later and far away as "No registered base".
+                    var appearancesRoot = Path.Combine(modPath, "motion_appearances");
+                    if (Directory.Exists(appearancesRoot))
+                    {
+                        foreach (var appDir in Directory.GetDirectories(appearancesRoot))
+                        {
+                            string folderName = Path.GetFileName(appDir);
+
+                            // Lethe truncates any ID containing "Appearance" (Lethe/Patches/Skin.cs),
+                            // so such a name would silently resolve to the wrong appearance later.
+                            if (folderName.Contains("Appearance"))
+                            {
+                                Logger.LogError($"[Appearance] Folder '{folderName}' cannot contain " +
+                                                "\"Appearance\" in its name. Rename it.");
+                                continue;
+                            }
+
+                            string donor = AppearanceRegistry.ReadBase(appDir);
+                            if (donor == null) continue;
+
+                            string customID = AppearanceRegistry.Prefix + folderName;
+                            MotionData.CustomAppearanceBases[customID] = donor;
+                            RegisterCharacterFolder(appDir, customID);
+
+                            Logger.LogWarning($"[Appearance] Registered '{customID}' cloning '{donor}'.");
+                        }
+                    }
+
                     var motionsRoot = Path.Combine(modPath, "custom_motions");
                     if (!Directory.Exists(motionsRoot)) continue;
                     // directory custom_motions:
@@ -106,66 +137,7 @@ public class Motions
                                 continue;
                             }
                         string appearanceID = Path.GetFileName(charDir);
-                        Logger.LogWarning($"Discovered directory for ID: [{appearanceID}] at path: {charDir}");
-                            // Discover CharacterVFX JSON definitions
-                            foreach (string characterVFXPath in Directory.GetFiles(charDir, "CharacterVFX*.json", SearchOption.AllDirectories))
-                            {
-                                Logger.LogWarning($"Discovered CharacterVFX JSON: {characterVFXPath}");
-
-                                if (!MotionData.CustomAppearanceVFX.ContainsKey(appearanceID))
-                                    MotionData.CustomAppearanceVFX.Add(appearanceID, characterVFXPath);
-
-                                /*
-                                CharacterVFX characterVFX = CharVFXParse.Parse(characterVFXPath);
-
-                                if (characterVFX != null)
-                                {
-                                    foreach (CharVFX entry in characterVFX.allVFX)
-                                    {
-                                        Logger.LogInfo(
-                                            $"Keyword={entry.keyword}, " +
-                                            $"Stack={entry.stackThres}, " +
-                                            $"Turns={entry.turnThres}, " +
-                                            $"Active={entry.active}, " +
-                                            $"VFX={entry.vfxName}");
-                                    }
-                                }
-                                */
-                            }
-                            // Load bundles for this character
-                            foreach (var bundlePath in Directory.GetFiles(charDir, "*.bundle", SearchOption.AllDirectories))
-                        {
-                            Logger.LogInfo($"Loading bundle for {appearanceID}: {bundlePath}");
-                            var bundle = UnityEngine.AssetBundle.LoadFromFile(bundlePath, 0);
-                            if (bundle != null)
-                            {
-                                if (!MotionData.LoadedAssets.ContainsKey(appearanceID))
-                                    MotionData.LoadedAssets.Add(appearanceID, new System.Collections.Generic.List<UnityEngine.AssetBundle>());
-
-                                MotionData.LoadedAssets[appearanceID].Add(bundle);
-                                Logger.LogWarning($"Loaded motion bundle {bundle.name} for {appearanceID}!");
-                            }
-                        }
-
-                        // Discover JSON definitions
-                        foreach (var detailObj in Enum.GetValues(typeof(MOTION_DETAIL)))
-                        {
-                            MOTION_DETAIL detail = (MOTION_DETAIL)detailObj;
-                            string skillName = detail.ToString();
-                            var jsonPath = Path.Combine(charDir, $"{skillName}.json");
-                            if (File.Exists(jsonPath))
-                            {
-                                if (!MotionData.CustomMotionDefinitions.ContainsKey(appearanceID))
-                                    MotionData.CustomMotionDefinitions.Add(appearanceID, new System.Collections.Generic.Dictionary<MOTION_DETAIL, string>());
-
-                                if (!MotionData.CustomMotionDefinitions[appearanceID].ContainsKey(detail))
-                                {
-                                    MotionData.CustomMotionDefinitions[appearanceID].Add(detail, jsonPath);
-                                    Logger.LogInfo($"Discovered motion definition: {appearanceID} -> {skillName} -> {jsonPath}");
-                                }
-
-                            }
-                        }
+                        RegisterCharacterFolder(charDir, appearanceID);
                     }
                 }
                 break;
@@ -178,11 +150,86 @@ public class Motions
         }
     }
 
+    /// <summary>
+    /// Registers one character folder: its CharacterVFX JSON, bundles, sprite motions and motion
+    /// definitions. Shared by custom_motions/&lt;appearanceID&gt;/ and motion_appearances/&lt;Name&gt;/,
+    /// which are structurally identical and differ only in the ID they register under.
+    /// </summary>
+    public static void RegisterCharacterFolder(string charDir, string appearanceID)
+    {
+        Logger.LogWarning($"Discovered directory for ID: [{appearanceID}] at path: {charDir}");
+
+        // Discover CharacterVFX JSON definitions
+        foreach (string characterVFXPath in Directory.GetFiles(charDir, "CharacterVFX*.json", SearchOption.AllDirectories))
+        {
+            Logger.LogWarning($"Discovered CharacterVFX JSON: {characterVFXPath}");
+
+            if (!MotionData.CustomAppearanceVFX.ContainsKey(appearanceID))
+                MotionData.CustomAppearanceVFX.Add(appearanceID, characterVFXPath);
+        }
+
+        // Load bundles for this character
+        foreach (var bundlePath in Directory.GetFiles(charDir, "*.bundle", SearchOption.AllDirectories))
+        {
+            Logger.LogInfo($"Loading bundle for {appearanceID}: {bundlePath}");
+            var bundle = UnityEngine.AssetBundle.LoadFromFile(bundlePath, 0);
+            if (bundle != null)
+            {
+                if (!MotionData.LoadedAssets.ContainsKey(appearanceID))
+                    MotionData.LoadedAssets.Add(appearanceID, new System.Collections.Generic.List<UnityEngine.AssetBundle>());
+
+                MotionData.LoadedAssets[appearanceID].Add(bundle);
+                Logger.LogWarning($"Loaded motion bundle {bundle.name} for {appearanceID}!");
+            }
+        }
+
+        // Bundle-free sprite motions from motions/<Motion>/
+        SpriteMotionLoader.LoadCharacterFolder(charDir, appearanceID);
+
+        // Discover JSON definitions
+        foreach (var detailObj in Enum.GetValues(typeof(MOTION_DETAIL)))
+        {
+            MOTION_DETAIL detail = (MOTION_DETAIL)detailObj;
+            string skillName = detail.ToString();
+            var jsonPath = Path.Combine(charDir, $"{skillName}.json");
+            if (File.Exists(jsonPath))
+            {
+                if (!MotionData.CustomMotionDefinitions.ContainsKey(appearanceID))
+                    MotionData.CustomMotionDefinitions.Add(appearanceID, new System.Collections.Generic.Dictionary<MOTION_DETAIL, string>());
+
+                if (!MotionData.CustomMotionDefinitions[appearanceID].ContainsKey(detail))
+                {
+                    MotionData.CustomMotionDefinitions[appearanceID].Add(detail, jsonPath);
+                    Logger.LogInfo($"Discovered motion definition: {appearanceID} -> {skillName} -> {jsonPath}");
+                }
+            }
+        }
+    }
+
     [HarmonyPatch(typeof(StageController), nameof(StageController.EndStage))]
     [HarmonyPrefix]
     public static void UnloadBundlesOnStageEnd()
     {
         MotionData.UnloadAll();
+    }
+
+    // ---- Custom appearance creation ---------------------------------------
+
+    /// <summary>
+    /// Prefixes Lethe's own resolver rather than SDCharacterSkinUtil.CreateSkin, which Lethe already
+    /// prefixes - two plugins on one method is an ordering problem waiting to happen. A "!motions_" ID
+    /// would otherwise fall through to three failed Addressables lookups and return null.
+    /// </summary>
+    [HarmonyPatch(typeof(Lethe.Patches.Skin), nameof(Lethe.Patches.Skin.CreateSkinForModel))]
+    [HarmonyPrefix]
+    public static bool CreateSkinForModel(BattleUnitView view, string appearanceID, Transform parent,
+                                          ref SD.CharacterAppearance __result)
+    {
+        if (string.IsNullOrEmpty(appearanceID) || !appearanceID.StartsWith(AppearanceRegistry.Prefix))
+            return true;   // not ours - let Lethe handle it
+
+        __result = AppearanceFactory.Create(view, appearanceID, parent);
+        return false;
     }
 
     // ---- OnNotify hook (MoveEnemy workaround) -----------------------------
@@ -227,14 +274,18 @@ public class Motions
         CueExtractor.EagerCacheDashEffects();
         bool hasCustomJSON = MotionData.HasDefinition(appearanceID);
         bool hasCustomBundle = MotionData.HasBundle(appearanceID);
+        bool hasSpriteMotion = MotionData.HasSpriteMotion(appearanceID);
 
-        if (hasCustomJSON || hasCustomBundle)
+        if (hasCustomJSON || hasCustomBundle || hasSpriteMotion)
         {
-            if (hasCustomBundle)
+            if (hasCustomBundle || hasSpriteMotion)
             {
-                Logger.LogInfo($"Custom bundle registered for {appearanceID}, attaching sidecar on init.");
+                Logger.LogInfo($"Custom motion source registered for {appearanceID}, attaching sidecar on init.");
                 MotionInjector.AttachSidecar(__instance, appearanceID);
-                CueExtractor.EagerCacheMotions(appearanceID);
+
+                // Only bundles have timelines to pre-clone; sprite motions are already built.
+                if (hasCustomBundle)
+                    CueExtractor.EagerCacheMotions(appearanceID);
             }
 
             // Collect all original VFX tracks across all motions for cross-motion referencing
@@ -289,7 +340,11 @@ public class Motions
         try
         {
             string appearanceID = __instance.charInfo.appearanceID;
-            if (MotionData.HasDefinition(appearanceID) || MotionData.HasBundle(appearanceID))
+            // Sprite-only characters need the spine renderer off too, or it keeps drawing underneath
+            // the sidecar. OriginalRenderer.enabled = false in PlayCustomMotion covers the plain
+            // SpriteRenderer, not the spine one - they are separate.
+            if (MotionData.HasDefinition(appearanceID) || MotionData.HasBundle(appearanceID) ||
+                MotionData.HasSpriteMotion(appearanceID))
             {
                 __instance.SetDisableSpine(true);
             }
