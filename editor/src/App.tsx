@@ -106,7 +106,7 @@ export default function App() {
         {character.motions.map((m) => (
           <li key={m.folder}>
             <strong>{m.folder}</strong> — {m.spec.frames.length} frames, {m.spec.duration.toFixed(2)}s
-            {!m.hadJson && <span className="text-gray-500"> (no animation.json — showing the 12fps default)</span>}
+            {!m.hadJson && !m.error && <span className="text-gray-500"> (no animation.json — showing the 12fps default)</span>}
             {m.error && <span className="text-red-700"> — animation.json rejected: {m.error}</span>}
           </li>
         ))}

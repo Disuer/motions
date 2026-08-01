@@ -71,6 +71,9 @@ async function loadAsset(dir: FileSystemDirectoryHandle, name: string): Promise<
   const info = readPngHeader(bytes)
   return {
     name,
+    // Never revoked: Task 5 starts rendering these into <img>/canvas, and revoking on folder
+    // close would need every consumer torn down first. Until that exists, blob URLs accumulate
+    // for the tab's lifetime across repeated folder opens.
     url: URL.createObjectURL(file),
     width: info?.width ?? 0,
     height: info?.height ?? 0,
