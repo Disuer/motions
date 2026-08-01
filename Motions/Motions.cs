@@ -291,7 +291,6 @@ public class Motions
             string appearanceID = __instance.charInfo.appearanceID;
             if (MotionData.HasDefinition(appearanceID) || MotionData.HasBundle(appearanceID))
             {
-                __instance.SetDisableTrail(true);
                 __instance.SetDisableSpine(true);
             }
 
