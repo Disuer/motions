@@ -43,6 +43,9 @@ public static class MotionData
     /// <summary>Empty fixed-length timelines that exist only to give the slave director a clock.</summary>
     public static readonly Dictionary<MotionKey, TimelineAsset> ClockTimelines = new();
 
+    /// <summary>"!motions_MyGuy" -> the vanilla appearance ID cloned to build it.</summary>
+    public static readonly Dictionary<string, string> CustomAppearanceBases = new();
+
     // ---- JSON definition registry -----------------------------------------
 
     /// <summary>appearanceID -> (MOTION_DETAIL -> jsonPath)</summary>
@@ -352,5 +355,6 @@ public static class MotionData
         SpriteMotions.Clear();
         SpriteMotionAppearances.Clear();
         ClockTimelines.Clear();
+        CustomAppearanceBases.Clear();
     }
 }
