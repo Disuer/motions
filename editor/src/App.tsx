@@ -41,6 +41,18 @@ export function sortFramesByTime(frames: Frame[]): Frame[] {
 }
 
 /**
+ * Maps a frame index through a sort by identity, not position: resolves the frame object at `i`
+ * in the pre-sort array, then finds where that same object landed in `sorted`. A drag can reorder
+ * frames other than the dragged one past a selected frame, so comparing `i` to the dragged index
+ * (as an earlier version of this did) silently points `selected` at the wrong sprite once that
+ * happens — only identity survives a sort correctly. `null` passes through: no frame selected
+ * isn't a frame to look up.
+ */
+export function remapFrameIndex(frames: Frame[], sorted: Frame[], i: number | null): number | null {
+  return i === null ? null : sorted.indexOf(frames[i])
+}
+
+/**
  * Places frame i at i/fps and sets duration to match, so the whole motion runs at that rate.
  * Pulled out for the same reason as nudgeAllFrames: "space evenly" is the button that carries
  * most of this task's value, and the arithmetic deserves a test that doesn't need a browser.
@@ -117,22 +129,21 @@ export default function App() {
   }
 
   /**
-   * Called once a frame drag ends (not during it — see the comment on sortFramesByTime).
-   * Re-sorts and follows the dragged frame to its new index, computed by sorting a local copy of
-   * specRef.current.frames: since sortFramesByTime doesn't clone individual frames, the dragged
-   * frame's object identity survives the sort and indexOf finds where it landed. Reads specRef
-   * rather than the `spec` closure because this function is called from a window listener bound
-   * at the start of the drag, before the moves that actually change frame i's time.
+   * Called once a frame drag ends (not during it — see the comment on sortFramesByTime). Reads
+   * specRef rather than the `spec` closure because this function is called from a window listener
+   * bound at the start of the drag, before the moves that actually change frame i's time.
+   * `selected` is remapped the same way as frameIndex — by identity, via remapFrameIndex — because
+   * the drag can reorder a different, selected frame past the one being dragged.
    */
   function onFrameDragEnd(i: number) {
     const current = specRef.current.frames
-    const newIndex = sortFramesByTime(current).indexOf(current[i])
+    const sorted = sortFramesByTime(current)
     editSpec((s) => {
       s.frames = sortFramesByTime(s.frames)
       return s
     })
-    setFrameIndex(newIndex)
-    setSelected((sel) => (sel === i ? newIndex : sel))
+    setFrameIndex(remapFrameIndex(current, sorted, i) ?? i)
+    setSelected((sel) => remapFrameIndex(current, sorted, sel))
   }
 
   async function alignAll(axis: 'xy' | 'x') {
@@ -197,7 +208,10 @@ export default function App() {
     const tick = (now: number) => {
       const t = ((now - started) / 1000) % spec.duration
       setPlayhead(t)
-      setFrameIndex(Math.max(0, frameIndexAt(spec.frames.map((f) => f.t), t)))
+      // specRef, not spec: dragging a marker while the preview is running must not restart this
+      // effect (that would reset `started` and jump the clock to zero), but the preview still
+      // needs to see the frame's live time, not the one it had when playback started.
+      setFrameIndex(Math.max(0, frameIndexAt(specRef.current.frames.map((f) => f.t), t)))
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)

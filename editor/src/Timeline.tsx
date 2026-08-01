@@ -53,8 +53,11 @@ export default function Timeline({
         <span className="text-gray-400">|</span>
         <label>
           space evenly at
-          <input type="number" className="mx-1 w-14 rounded border px-1 text-right" value={fps}
-                 onChange={(e) => setFps(Number(e.target.value) || DEFAULT_FPS)} />
+          {/* min is a hint the browser doesn't enforce on typed input, so the real guard is
+              clamping the value itself: a zero or negative fps turns into a zero or negative
+              duration, and pct() below divides by duration. */}
+          <input type="number" min={1} className="mx-1 w-14 rounded border px-1 text-right" value={fps}
+                 onChange={(e) => setFps(Math.max(1, Number(e.target.value) || DEFAULT_FPS))} />
           fps
         </label>
         <button onClick={() => onSpace(fps)} className="rounded border px-2 py-0.5">apply</button>

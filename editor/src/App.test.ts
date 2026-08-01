@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { alignFrame, nudgeAllFrames, sortFramesByTime, spaceEvenlyFrames } from './App'
+import { alignFrame, nudgeAllFrames, remapFrameIndex, sortFramesByTime, spaceEvenlyFrames } from './App'
 import { Frame } from './spec'
 
 function frame(sprite: string, offset: [number, number], scale = 1): Frame {
@@ -130,5 +130,38 @@ describe('sortFramesByTime', () => {
     const frames = [frame('a.png', [0, 0]), frame('b.png', [0, 0])]
     frames[1].t = 0.1
     expect(sortFramesByTime(frames).map((f) => f.sprite)).toEqual(['a.png', 'b.png'])
+  })
+})
+
+describe('remapFrameIndex', () => {
+  // A(t=0), B(t=0.1), C(t=0.2) — then C is dragged to t=0.05, landing between A and B.
+  // Post-sort order is [A, C, B]: C moved from index 2 to index 1, and B moved from index 1
+  // to index 2 even though B itself was never touched by the drag.
+  const pre = [frame('a.png', [0, 0]), frame('b.png', [0, 0]), frame('c.png', [0, 0])]
+  pre[0].t = 0
+  pre[1].t = 0.1
+  pre[2].t = 0.05
+  const sorted = sortFramesByTime(pre)
+
+  it('follows the dragged frame to its new index', () => {
+    const newIndex = remapFrameIndex(pre, sorted, 2) // 2 = C's pre-sort index
+    expect(newIndex).toBe(1)
+    expect(sorted[newIndex!].sprite).toBe('c.png')
+  })
+
+  it('follows a different, selected frame that the drag reordered past', () => {
+    const newIndex = remapFrameIndex(pre, sorted, 1) // 1 = B's pre-sort index; B was not dragged
+    expect(newIndex).toBe(2)
+    expect(sorted[newIndex!].sprite).toBe('b.png')
+  })
+
+  it('leaves a selected frame whose position the drag did not affect', () => {
+    const newIndex = remapFrameIndex(pre, sorted, 0) // 0 = A's pre-sort index
+    expect(newIndex).toBe(0)
+    expect(sorted[newIndex!].sprite).toBe('a.png')
+  })
+
+  it('passes null through unchanged: no frame selected is not a frame to look up', () => {
+    expect(remapFrameIndex(pre, sorted, null)).toBeNull()
   })
 })
