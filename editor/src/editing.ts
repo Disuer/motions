@@ -34,6 +34,27 @@ export function sortFramesByTime(frames: Frame[]): Frame[] {
 }
 
 /**
+ * Adds an unused asset to the timeline as a new frame, then re-sorts. The sort is the point:
+ * a hand-written animation.json can hold a frame past `duration`, so appending at `t = duration`
+ * does not necessarily append in time order, and frameIndexAt (preview and game alike) reads the
+ * wrong frame from an array that isn't ascending. Bottom-centre, scale 1 - the same defaults
+ * defaultSpec uses, so an imported PNG starts standing on the ground.
+ */
+export function addFrameAt(frames: Frame[], sprite: string, t: number): Frame[] {
+  return sortFramesByTime([...frames, { t, sprite, offset: [0, 0], scale: 1 }])
+}
+
+/**
+ * Clamps a frame index into a frames array of `length`. prev/next used to clamp against the
+ * on-disk spec's length while the canvas drew the edited one, so removing frames walked the index
+ * off the end of what was actually on screen: blank canvas, "No frame selected", and a Delete that
+ * removed nothing while still marking the tab dirty. Length must come from the edited spec.
+ */
+export function clampFrameIndex(i: number, length: number): number {
+  return Math.max(0, Math.min(length - 1, i))
+}
+
+/**
  * Maps a frame index through a sort by identity, not position: resolves the frame object at `i`
  * in the pre-sort array, then finds where that same object landed in `sorted`. A drag can reorder
  * frames other than the dragged one past a selected frame, so comparing `i` to the dragged index

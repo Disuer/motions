@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  alignFrame, dirtyMotions, nudgeAllFrames, planSave, remapAfterRemoval, remapFrameIndex,
-  removeFrame, sortFramesByTime, spaceEvenlyFrames,
+  addFrameAt, alignFrame, clampFrameIndex, dirtyMotions, nudgeAllFrames, planSave,
+  remapAfterRemoval, remapFrameIndex, removeFrame, sortFramesByTime, spaceEvenlyFrames,
 } from './editing'
 import { LoadedCharacter } from './fs'
 import { Frame } from './spec'
@@ -134,6 +134,68 @@ describe('sortFramesByTime', () => {
     const frames = [frame('a.png', [0, 0]), frame('b.png', [0, 0])]
     frames[1].t = 0.1
     expect(sortFramesByTime(frames).map((f) => f.sprite)).toEqual(['a.png', 'b.png'])
+  })
+})
+
+describe('addFrameAt', () => {
+  function at(t: number, sprite: string): Frame {
+    return { t, sprite, offset: [0, 0], scale: 1 }
+  }
+
+  it('adds the sprite bottom-centred at scale 1, standing on the ground', () => {
+    const out = addFrameAt([at(0, 'a.png')], 'b.png', 0.5)
+    expect(out[1].sprite).toBe('b.png')
+    expect(out[1].offset).toEqual([0, 0])
+    expect(out[1].scale).toBe(1)
+    expect(out[1].t).toBe(0.5)
+  })
+
+  // The finding: a hand-written animation.json can hold a frame past `duration`, so appending at
+  // t = duration is not appending in time order. frameIndexAt then resolves the wrong sprite in
+  // both the preview and the game.
+  it('re-sorts, so a frame added at duration lands before a frame written past it', () => {
+    const frames = [at(0, 'a.png'), at(2, 'late.png')]  // late.png sits past duration 1
+    const out = addFrameAt(frames, 'new.png', 1)
+    expect(out.map((f) => f.sprite)).toEqual(['a.png', 'new.png', 'late.png'])
+    expect(out.map((f) => f.t)).toEqual([0, 1, 2])
+  })
+
+  it('appends when the new time really is last', () => {
+    const out = addFrameAt([at(0, 'a.png'), at(0.1, 'b.png')], 'c.png', 0.2)
+    expect(out.map((f) => f.sprite)).toEqual(['a.png', 'b.png', 'c.png'])
+  })
+
+  it('does not mutate the input array', () => {
+    const frames = [at(0, 'a.png')]
+    addFrameAt(frames, 'b.png', 1)
+    expect(frames.map((f) => f.sprite)).toEqual(['a.png'])
+  })
+})
+
+describe('clampFrameIndex', () => {
+  const frames = [frame('a.png', [0, 0]), frame('b.png', [0, 0]), frame('c.png', [0, 0])]
+
+  it('steps forward and back within range, resolving the expected sprite', () => {
+    expect(frames[clampFrameIndex(1, frames.length)].sprite).toBe('b.png')
+    expect(frames[clampFrameIndex(0 - 1, frames.length)].sprite).toBe('a.png')
+  })
+
+  // The finding: prev/next clamped against the ON-DISK spec's length. Remove two of five frames
+  // and next walked frameIndex to 4 - past the end of the edited array the canvas draws.
+  it('never leaves an index past the end of a shortened motion', () => {
+    const five = ['a', 'b', 'c', 'd', 'e'].map((n) => frame(`${n}.png`, [0, 0]))
+    const shortened = removeFrame(removeFrame(five, 4), 3)  // five frames, two removed
+    const i = clampFrameIndex(4, shortened.length)          // where `next` used to walk to
+    expect(i).toBe(2)
+    expect(shortened[i].sprite).toBe('c.png')  // not undefined: a real frame is still on screen
+  })
+
+  it('clamps below zero to the first frame', () => {
+    expect(clampFrameIndex(-3, frames.length)).toBe(0)
+  })
+
+  it('collapses to 0 for a single-frame motion', () => {
+    expect(clampFrameIndex(1, 1)).toBe(0)
   })
 })
 

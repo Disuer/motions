@@ -10,8 +10,8 @@ import { MOTION_NAMES, isSkill } from './motions'
 import { boundsOf } from './png'
 import { AnimationSpec, DEFAULT_FPS, Frame, frameIndexAt, serialiseSpec } from './spec'
 import {
-  alignFrame, nudgeAllFrames, planSave, remapAfterRemoval, remapFrameIndex, removeFrame, SavePlan,
-  sortFramesByTime, spaceEvenlyFrames,
+  addFrameAt, alignFrame, clampFrameIndex, nudgeAllFrames, planSave, remapAfterRemoval,
+  remapFrameIndex, removeFrame, SavePlan, sortFramesByTime, spaceEvenlyFrames,
 } from './editing'
 
 const SUPPORTED = typeof window !== 'undefined' && 'showDirectoryPicker' in window
@@ -43,7 +43,17 @@ export default function App() {
     void recallFolder().then(setRecalled)
   }, [])
 
-  useEffect(() => { if (character) setBase(character.appearanceBase) }, [character])
+  // Same class as the drag and the specs-wipe: state read after the render that produced it.
+  // importAssets and createMotion both re-read the folder, replacing `character`, which fires the
+  // effect below. `base` was the one piece of state not keyed by folder name, so the sync used to
+  // overwrite an unsaved edit with the on-disk value while `dirty` still held -1 - Save stayed
+  // enabled, the dialog still listed appearance.json, and the write put the old base back.
+  const dirtyRef = useRef(dirty)
+  dirtyRef.current = dirty
+
+  useEffect(() => {
+    if (character && !dirtyRef.current.has(-1)) setBase(character.appearanceBase)
+  }, [character])
 
   // Folders loaded so far, in the order specs/dirty currently index by. Updated at the end of the
   // effect below, so it always holds the order from BEFORE the character that effect is reacting to.
@@ -124,6 +134,17 @@ export default function App() {
       }
       return s
     })
+  }
+
+  /**
+   * The one way to change which frame is being viewed. `selected` used to be seeded only by the
+   * "arrows move:" button and then left behind by prev/next and by clicking a timeline marker, so
+   * an arrow key nudged a frame that was not on screen. Non-null selected follows the viewed
+   * frame; null keeps meaning "arrows move ALL frames".
+   */
+  function goToFrame(i: number) {
+    setFrameIndex(i)
+    setSelected((s) => (s === null ? null : i))
   }
 
   function nudgeAll(dx: number, dy: number) {
@@ -372,6 +393,12 @@ export default function App() {
     )
   }
 
+  // The EDITED spec's frame count - character.motions[tab].spec is the immutable disk copy, so
+  // counting it left "/ 2" on screen after three frames were added and let `next` walk the index
+  // off the end of the array the canvas actually draws. The disk copy stays as the fallback for
+  // the single render before the effect above populates `specs`.
+  const frameCount = (spec ?? character.motions[tab]?.spec)?.frames.length ?? 0
+
   return (
     <main className="p-8">
       {/* inert, not just conditional styling: while the confirmation dialog is open, nothing in
@@ -452,10 +479,9 @@ export default function App() {
                           onChange={(e) => setOnionSkin(e.target.checked)} /> onion skin</label>
             <label>zoom <input type="range" min={0.25} max={4} step={0.05} value={zoom}
                                onChange={(e) => setZoom(Number(e.target.value))} /></label>
-            <span>frame {frameIndex + 1} / {character.motions[tab].spec.frames.length}</span>
-            <button onClick={() => setFrameIndex((i) => Math.max(0, i - 1))}>prev</button>
-            <button onClick={() => setFrameIndex((i) =>
-              Math.max(0, Math.min(character.motions[tab].spec.frames.length - 1, i + 1)))}>next</button>
+            <span>frame {frameIndex + 1} / {frameCount}</span>
+            <button onClick={() => goToFrame(clampFrameIndex(frameIndex - 1, frameCount))}>prev</button>
+            <button onClick={() => goToFrame(clampFrameIndex(frameIndex + 1, frameCount))}>next</button>
             <button onClick={() => void alignAll('xy')} className="rounded border px-2 py-0.5">Align all</button>
             <button onClick={() => void alignAll('x')} className="rounded border px-2 py-0.5">Align X only</button>
             <button onClick={() => setSelected(selected === null ? frameIndex : null)}
@@ -523,7 +549,7 @@ export default function App() {
                       .map((name) => (
                         <button key={name} className="block w-full truncate rounded border px-1 text-left text-xs"
                                 onClick={() => editSpec((s) => {
-                                  s.frames.push({ t: s.duration, sprite: name, offset: [0, 0], scale: 1 })
+                                  s.frames = addFrameAt(s.frames, name, s.duration)
                                   s.duration = s.duration + 1 / DEFAULT_FPS
                                   return s
                                 })}>
@@ -543,7 +569,7 @@ export default function App() {
                 spec={spec}
                 index={frameIndex}
                 playhead={playhead}
-                onPick={setFrameIndex}
+                onPick={goToFrame}
                 onFrameTime={(i, t) => updateFrame(i, { t })}
                 onFrameDragEnd={onFrameDragEnd}
                 onSfxTime={(i, t) => editSpec((s) => { s.sfx[i] = { ...s.sfx[i], t }; return s })}
