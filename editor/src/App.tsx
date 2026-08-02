@@ -36,7 +36,8 @@ import { Marker } from './SkillTimeline'
 import {
   addFrameAt, addSfx, alignFrame, carryOver, carryOverNamed, clampFrameIndex, duplicateFrame,
   nudgeAllFrames,
-  planSave, remapAfterRemoval, remapFrameIndex, removeFrame, removeSfx, SavePlan, sortFramesByTime,
+  planSave, remapAfterRemoval, remapFrameIndex, removeFrame, removeSfx, SavePlan, sfxIn,
+  sortFramesByTime,
   spaceEvenlyFrames,
 } from './editing'
 
@@ -523,9 +524,38 @@ export default function App() {
     if (playhead === null || !spec) return
     let raf = 0
     const started = performance.now()
+    /** End of the slice already played, per sfxIn. Below zero so a sound at 0 fires on lap one. */
+    let last = -1
+    const playing: HTMLAudioElement[] = []
+
+    const fire = (from: number, to: number) => {
+      for (const s of sfxIn(specRef.current.sfx, from, to)) {
+        // characterRef/tabRef for the same reason the frame lookup below uses specRef: this loop
+        // outlives the render that started it, and an import mid-preview revokes the old URLs.
+        const sound = characterRef.current?.motions[tabRef.current]?.sounds.get(s.file)
+        // A sound named in animation.json with no file beside it is silent here, exactly as it is
+        // in game. It is not an error to report from a render loop.
+        if (!sound) continue
+        const audio = new Audio(sound.url)
+        // The same two fields the timeline draws the bar from, so the preview sounds like the bar
+        // looks - and like the game, which seeks by clipIn and stops the channel after duration.
+        if (s.clipIn) audio.currentTime = s.clipIn
+        if (s.duration) setTimeout(() => audio.pause(), s.duration * 1000)
+        playing.push(audio)
+        audio.onended = () => { playing.splice(playing.indexOf(audio), 1) }
+        // Rejects only when the tab has had no gesture, and the preview is started by a click.
+        void audio.play().catch(() => {})
+      }
+    }
+
     const tick = (now: number) => {
       const t = ((now - started) / 1000) % spec.duration
       setPlayhead(t)
+      // A wrap closes out the old lap before opening the next, or a sound in the tail of the
+      // motion would be skipped on every loop.
+      if (t < last) { fire(last, spec.duration); last = -1 }
+      fire(last, t)
+      last = t
       // specRef, not spec: dragging a marker while the preview is running must not restart this
       // effect (that would reset `started` and jump the clock to zero), but the preview still
       // needs to see the frame's live time, not the one it had when playback started.
@@ -533,7 +563,12 @@ export default function App() {
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      cancelAnimationFrame(raf)
+      // Stop means stop: a sound longer than the rest of the motion would otherwise outlive the
+      // preview that started it, including when the tab is switched out from under it.
+      for (const audio of playing) audio.pause()
+    }
     // Restarting on every playhead change would reset the clock, so this deliberately
     // depends only on whether playback is on at all.
   }, [playhead === null, spec?.duration, tab])
@@ -1239,12 +1274,12 @@ export default function App() {
                       can fire several times in a motion. */}
                   <div className="mt-4 text-xs font-medium">Sounds</div>
                   <p className="mt-1 text-[10px] leading-tight text-muted-foreground">
-                    {character.motions[tab].sounds.length > 0
+                    {character.motions[tab].sounds.size > 0
                       ? 'Adds at the frame you are on. Drag it afterwards.'
                       : 'Drop a .wav or .ogg onto the canvas to bring one in.'}
                   </p>
                   <div className="mt-2 flex flex-col gap-1">
-                    {character.motions[tab].sounds.map((name) => (
+                    {[...character.motions[tab].sounds.keys()].map((name) => (
                       <Button key={name} variant="outline" size="sm"
                               className="w-full justify-start font-mono text-[11px]"
                               onClick={() => {
@@ -1277,8 +1312,9 @@ export default function App() {
                 onPick={(i) => { setSfxIndex(null); goToFrame(i) }}
                 onFrameTime={(i, t) => updateFrame(i, { t })}
                 onFrameDragEnd={onFrameDragEnd}
-                onSfxTime={(i, t) => editSpec((s) => { s.sfx[i] = { ...s.sfx[i], t: Math.max(0, t) }; return s })}
+                onSfxChange={(i, next) => editSpec((s) => { s.sfx[i] = next; return s })}
                 sfxIndex={sfxIndex}
+                sfxLength={(file) => character.motions[tab].sounds.get(file)?.seconds ?? 0}
                 onPickSfx={setSfxIndex}
                 onSpace={spaceEvenly}
                 onDuration={(duration) => editSpec((s) => ({ ...s, duration }))}

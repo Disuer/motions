@@ -259,6 +259,69 @@ export function removeSfx(sfx: Sfx[], i: number): Sfx[] {
   return sfx.filter((_, j) => j !== i)
 }
 
+/** Shortest a drag will leave a sound, so one edge cannot be pulled through the other. */
+const MIN_SFX = 0.01
+
+/**
+ * How long a sound is heard for, in seconds: its `duration` when set, otherwise whatever is left
+ * of the file after `clipIn`. A `fileSeconds` of 0 means the browser could not read the file, and
+ * the answer is 0 - unknown, to be drawn as a point rather than as a guessed span. A `duration` of
+ * 0 is treated as absent, the same way the game does: it means play to the end, not play nothing.
+ */
+export function sfxSpan(s: Sfx, fileSeconds: number): number {
+  if (s.duration) return Math.max(0, s.duration)
+  return Math.max(0, fileSeconds - (s.clipIn ?? 0))
+}
+
+/**
+ * The right edge dragged to `end`, on the motion's clock. Shortening writes `duration`; dragging
+ * back out to the end of the file deletes the key rather than writing the remainder, because
+ * absent is the game's own "play to the end" - and a written length would not follow the file if
+ * it is later replaced with a longer one.
+ */
+export function trimSfxEnd(s: Sfx, end: number, fileSeconds: number): Sfx {
+  const wanted = Math.max(MIN_SFX, end - s.t)
+  if (fileSeconds > 0 && wanted >= fileSeconds - (s.clipIn ?? 0)) {
+    const { duration: _played, ...kept } = s
+    return kept
+  }
+  return { ...s, duration: wanted }
+}
+
+/**
+ * The left edge dragged to `start`. The sound keeps landing on the same instants it did - the head
+ * is cut off rather than the whole thing sliding - so `t` and `clipIn` move together, and an
+ * explicit `duration` shrinks by the same amount. Bounded by the start of the file, the start of
+ * the motion, and its own right edge.
+ */
+export function trimSfxStart(s: Sfx, start: number, fileSeconds: number): Sfx {
+  const clipIn = s.clipIn ?? 0
+  // Negative is earlier: as far back as the file's own beginning, or the motion's, whichever
+  // comes first. Forward is bounded by the span, which is 0 for a file of unknown length.
+  const dt = Math.min(
+    Math.max(start - s.t, -clipIn, -s.t),
+    Math.max(0, sfxSpan(s, fileSeconds) - MIN_SFX),
+  )
+
+  const next: Sfx = { ...s, t: s.t + dt }
+  if (clipIn + dt > 0) next.clipIn = clipIn + dt
+  else delete next.clipIn
+  if (s.duration) next.duration = Math.max(MIN_SFX, s.duration - dt)
+  return next
+}
+
+/**
+ * The sounds the preview clock passed over in the slice `(from, to]`, so each one fires once on
+ * the tick that crosses it rather than on every tick after it. Open on the left and closed on the
+ * right, which is what makes the slices of a lap fit together without a gap or an overlap: the
+ * caller starts a lap below zero so a sound sitting exactly at 0 still fires, and closes the lap
+ * out at the duration before starting the next one. Sfx are not sorted (unlike frames) - they are
+ * independent events - so this scans them all rather than seeking.
+ */
+export function sfxIn(sfx: Sfx[], from: number, to: number): Sfx[] {
+  return sfx.filter((s) => s.t > from && s.t <= to)
+}
+
 /**
  * Copies frame `i` and places the copy just after it: halfway to the next frame, or at the end of
  * the motion when it is the last one, in which case the motion grows by a frame's worth of time

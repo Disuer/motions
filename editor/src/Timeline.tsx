@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import NumberField from './NumberField'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import Ruler, { gridImage } from './Ruler'
-import { AnimationSpec, DEFAULT_FPS } from './spec'
+import { AnimationSpec, DEFAULT_FPS, Sfx } from './spec'
+import { sfxSpan, trimSfxEnd, trimSfxStart } from './editing'
 
 /**
  * t as a percentage of duration, for a CSS `left`. Duration should always be positive - parseSpec
@@ -43,9 +44,16 @@ interface Props {
    * drag: re-sorting mid-drag would renumber the frame under the pointer.
    */
   onFrameDragEnd: (i: number) => void
-  onSfxTime: (i: number, t: number) => void
+  /**
+   * Replaces a sound outright rather than patching it: trimming can delete `clipIn` or `duration`,
+   * and every drag recomputes from the sound as it was when the drag began, so applying the same
+   * pointer position twice lands in the same place.
+   */
+  onSfxChange: (i: number, next: Sfx) => void
   /** Which sound is selected, or null. Selecting one is what puts it in the inspector. */
   sfxIndex: number | null
+  /** How long a sound file runs, in seconds. 0 for one that is missing or could not be read. */
+  sfxLength: (file: string) => number
   onPickSfx: (i: number) => void
   onSpace: (fps: number) => void
   /** Same setter the inspector's duration field uses; this is the second view of one value. */
@@ -53,8 +61,8 @@ interface Props {
 }
 
 export default function Timeline({
-  spec, index, playhead, onPick, onFrameTime, onFrameDragEnd, onSfxTime, sfxIndex, onPickSfx,
-  onSpace, onDuration,
+  spec, index, playhead, onPick, onFrameTime, onFrameDragEnd, onSfxChange, sfxIndex, sfxLength,
+  onPickSfx, onSpace, onDuration,
 }: Props) {
   const strip = useRef<HTMLDivElement>(null)
   const [fps, setFps] = useState(DEFAULT_FPS)
@@ -139,19 +147,72 @@ export default function Timeline({
             ))}
           </div>
 
-          {/* sfx */}
-          <div className="relative mt-1 h-6 rounded-md border bg-muted/40"
+          {/* sfx. Each one is a bar covering the time it actually sounds for, so a sound running
+              past the end of the motion, or over the frame after it, is visible rather than
+              something you find out by listening. Clipped at the strip: a sound longer than the
+              motion runs off the end, and drawing it outside would overlap the panel. */}
+          <div className="relative mt-1 h-6 overflow-hidden rounded-md border bg-muted/40"
                style={{ backgroundImage: grid }}>
-            {spec.sfx.map((s, i) => (
-              <button
-                key={i}
-                onPointerDown={(e) => { onPickSfx(i); drag(e, (t) => onSfxTime(i, t)) }}
-                title={`${s.file} @ ${s.t.toFixed(3)}s`}
-                className={`absolute top-1 h-4 w-4 -translate-x-1/2 rounded-full text-[8px] ${
-                  i === sfxIndex ? 'ring-2 ring-primary ring-offset-1 bg-emerald-600' : 'bg-emerald-600/70'}`}
-                style={{ left: pct(s.t, spec.duration) }}
-              />
-            ))}
+            {spec.sfx.map((s, i) => {
+              const seconds = sfxLength(s.file)
+              const span = sfxSpan(s, seconds)
+              // The grips are siblings of the bar rather than children: a button inside a button
+              // is not something a browser or a screen reader will make sense of.
+              const grip = (edge: 'start' | 'end') => (
+                <div
+                  role="separator"
+                  aria-label={`${s.file} ${edge}`}
+                  title={edge === 'start'
+                    ? 'Drag to cut the start off. The rest keeps its place in the motion.'
+                    : 'Drag to stop the sound early. Pull past the end to play the whole file.'}
+                  className="absolute top-1 z-20 h-4 w-1.5 cursor-ew-resize rounded-sm bg-emerald-950/70"
+                  style={{
+                    // A sound that outlasts the motion has its end off the side of the strip,
+                    // which the strip clips - so the end grip pins to the edge and stays grabbable
+                    // instead of being somewhere the pointer cannot reach. Dragging it from there
+                    // shortens the sound to the motion, which is as far as this strip goes; the
+                    // inspector's "play for" field is what sets a longer one.
+                    left: edge === 'start'
+                      ? pct(s.t, spec.duration)
+                      : `min(${pct(s.t + span, spec.duration)}, 100%)`,
+                    transform: edge === 'start' ? 'none' : 'translateX(-100%)',
+                  }}
+                  onPointerDown={(e) => {
+                    onPickSfx(i)
+                    drag(e, (t) => onSfxChange(i, edge === 'start'
+                      ? trimSfxStart(s, t, seconds)
+                      : trimSfxEnd(s, t, seconds)))
+                  }}
+                />
+              )
+              return (
+                <Fragment key={i}>
+                  <button
+                    onPointerDown={(e) => {
+                      onPickSfx(i)
+                      // How far into the bar it was grabbed. Without this the start of the sound
+                      // jumps under the pointer, which on a bar wide enough to grab in the middle
+                      // means grabbing it moves it - the one thing a drag must not do on its own.
+                      const grabbed = timeAt(e.clientX) - s.t
+                      drag(e, (t) => onSfxChange(i, { ...s, t: Math.max(0, t - grabbed) }))
+                    }}
+                    title={`${s.file} @ ${s.t.toFixed(3)}s${span > 0 ? `, plays for ${span.toFixed(3)}s` : ''}`}
+                    className={`absolute top-1 h-4 rounded-sm ${
+                      i === sfxIndex ? 'z-10 bg-emerald-600 ring-2 ring-primary' : 'bg-emerald-600/70'}`}
+                    style={{
+                      left: pct(s.t, spec.duration),
+                      // A sound whose length could not be read still has to be grabbable, so it
+                      // falls back to a fixed 8px tab rather than a percentage of nothing - same
+                      // as a zero-length marker on the skill timeline.
+                      width: span > 0 ? `max(8px, ${pct(span, spec.duration)})` : '8px',
+                    }}
+                  />
+                  {/* Nothing to trim on a sound of unknown length: both grips would sit on the
+                      8px tab, on top of each other and on top of the drag that moves it. */}
+                  {span > 0 && <>{grip('start')}{grip('end')}</>}
+                </Fragment>
+              )
+            })}
           </div>
 
           {/* One playhead over both tracks, so a sound and the frame it lands on read as the same

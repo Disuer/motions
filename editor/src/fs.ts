@@ -15,6 +15,13 @@ export interface LoadedAsset {
   rejection: string | null
 }
 
+export interface LoadedSound {
+  /** Object URL for `new Audio(url)`. Revoked when the folder is closed. */
+  url: string
+  /** How long it runs, or 0 when the browser could not tell. Drawn as its bar on the timeline. */
+  seconds: number
+}
+
 export interface LoadedMotion {
   folder: string
   handle: FileSystemDirectoryHandle
@@ -22,7 +29,8 @@ export interface LoadedMotion {
   /** False means the spec was reconstructed from the zero-config default. */
   hadJson: boolean
   assets: Map<string, LoadedAsset>
-  sounds: string[]
+  /** File name -> the loaded sound, for the preview to play. Revoked with the assets above. */
+  sounds: Map<string, LoadedSound>
   /** Why animation.json was rejected, if it was. The plugin falls back to the bundle here. */
   error: string | null
 }
@@ -283,6 +291,25 @@ async function readText(dir: FileSystemDirectoryHandle, name: string): Promise<s
   }
 }
 
+/**
+ * How long a sound runs, by letting the browser read its metadata - there is no header parser here
+ * to match readPngHeader, and .ogg alone would need one. Answers 0 rather than rejecting on a file
+ * it cannot decode, and gives up after a second: this sits in the path that opens a character, and
+ * a file that fires neither event would otherwise hang the open on a blank screen. A 0 costs the
+ * bar on the timeline, nothing else.
+ */
+function soundSeconds(url: string): Promise<number> {
+  return new Promise((resolve) => {
+    const audio = new Audio()
+    // Infinite for a stream, NaN before metadata arrives; neither is a length to draw.
+    const done = (seconds: number) => resolve(Number.isFinite(seconds) ? seconds : 0)
+    audio.onloadedmetadata = () => done(audio.duration)
+    audio.onerror = () => done(0)
+    setTimeout(() => done(0), 1000)
+    audio.src = url
+  })
+}
+
 async function loadAsset(dir: FileSystemDirectoryHandle, name: string): Promise<LoadedAsset> {
   const file = await (await dir.getFileHandle(name)).getFile()
   const bytes = new Uint8Array(await file.arrayBuffer())
@@ -301,19 +328,27 @@ async function loadAsset(dir: FileSystemDirectoryHandle, name: string): Promise<
 
 async function loadMotion(handle: FileSystemDirectoryHandle, folder: string): Promise<LoadedMotion> {
   const pngs: string[] = []
-  const sounds: string[] = []
+  const wavs: string[] = []
 
   for await (const entry of handle.values()) {
     if (entry.kind !== 'file') continue
     const lower = entry.name.toLowerCase()
     if (lower.endsWith('.png')) pngs.push(entry.name)
-    else if (lower.endsWith('.wav') || lower.endsWith('.ogg')) sounds.push(entry.name)
+    else if (lower.endsWith('.wav') || lower.endsWith('.ogg')) wavs.push(entry.name)
   }
   pngs.sort(compareNatural)
-  sounds.sort(compareNatural)
+  wavs.sort(compareNatural)
 
   const assets = new Map<string, LoadedAsset>()
   for (const name of pngs) assets.set(name, await loadAsset(handle, name))
+
+  // No header check like loadAsset does for PNGs: the browser decodes these, not the game, and a
+  // file it cannot play just stays silent in the preview.
+  const sounds = new Map<string, LoadedSound>()
+  for (const name of wavs) {
+    const url = URL.createObjectURL(await (await handle.getFileHandle(name)).getFile())
+    sounds.set(name, { url, seconds: await soundSeconds(url) })
+  }
 
   const json = await readText(handle, 'animation.json')
   let spec: AnimationSpec
@@ -439,6 +474,7 @@ export async function loadCharacter(
 export function revokeAssets(character: LoadedCharacter): void {
   for (const motion of character.motions) {
     for (const asset of motion.assets.values()) URL.revokeObjectURL(asset.url)
+    for (const sound of motion.sounds.values()) URL.revokeObjectURL(sound.url)
   }
 }
 

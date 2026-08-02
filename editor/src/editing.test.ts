@@ -4,7 +4,8 @@ import {
   duplicateFrame,
   nudgeAllFrames, removeSfx,
   planSave,
-  remapAfterRemoval, remapFrameIndex, removeFrame, sortFramesByTime, spaceEvenlyFrames,
+  remapAfterRemoval, remapFrameIndex, removeFrame, sfxIn, sfxSpan, sortFramesByTime,
+  spaceEvenlyFrames, trimSfxEnd, trimSfxStart,
 } from './editing'
 import { LoadedCharacter } from './fs'
 import { AnimationSpec, Frame } from './spec'
@@ -562,6 +563,86 @@ describe('addSfx / removeSfx', () => {
     const before = [sfx(0, 'a.wav'), sfx(1, 'b.wav')]
     expect(removeSfx(before, 0).map((s) => s.file)).toEqual(['b.wav'])
     expect(removeSfx(removeSfx(before, 0), 0)).toEqual([])
+  })
+})
+
+describe('sfxSpan / trimSfxEnd / trimSfxStart', () => {
+  const sound = { t: 1, file: 'hit.wav' }
+
+  it('spans the rest of the file, or the duration when one is set', () => {
+    expect(sfxSpan(sound, 2)).toBe(2)
+    expect(sfxSpan({ ...sound, clipIn: 0.5 }, 2)).toBe(1.5)
+    expect(sfxSpan({ ...sound, duration: 0.3 }, 2)).toBe(0.3)
+    // Unknown length, and a zero duration, both mean "no span to draw" rather than a guess.
+    expect(sfxSpan(sound, 0)).toBe(0)
+    expect(sfxSpan({ ...sound, duration: 0 }, 2)).toBe(2)
+  })
+
+  it('writes a duration when the end is pulled in', () => {
+    expect(trimSfxEnd(sound, 1.5, 2).duration).toBeCloseTo(0.5)
+  })
+
+  it('drops the duration when the end goes back to the end of the file', () => {
+    const trimmed = { ...sound, duration: 0.5 }
+    expect(trimSfxEnd(trimmed, 3, 2)).not.toHaveProperty('duration')
+    // With clipIn, "the end of the file" is that much closer.
+    expect(trimSfxEnd({ ...trimmed, clipIn: 1 }, 2, 2)).not.toHaveProperty('duration')
+  })
+
+  it('never lets the end cross the start', () => {
+    expect(trimSfxEnd(sound, 0.2, 2).duration).toBe(0.01)
+  })
+
+  it('cuts the head off without moving the sound in time', () => {
+    const next = trimSfxStart(sound, 1.4, 2)
+    expect(next.t).toBeCloseTo(1.4)
+    expect(next.clipIn).toBeCloseTo(0.4)
+    expect(next.duration).toBeUndefined()
+  })
+
+  it('shrinks an explicit duration by the same amount it trims', () => {
+    const next = trimSfxStart({ ...sound, clipIn: 0.5, duration: 1 }, 1.25, 2)
+    expect(next.clipIn).toBeCloseTo(0.75)
+    expect(next.duration).toBeCloseTo(0.75)
+  })
+
+  it('stops at the beginning of the file, and clears clipIn there', () => {
+    const next = trimSfxStart({ ...sound, clipIn: 0.4 }, 0, 2)
+    expect(next.t).toBeCloseTo(0.6)
+    expect(next).not.toHaveProperty('clipIn')
+  })
+
+  it('never lets the start cross the end', () => {
+    expect(trimSfxStart({ ...sound, duration: 0.5 }, 9, 2).t).toBeCloseTo(1.49)
+  })
+
+  it('leaves a sound of unknown length where it is rather than dragging it forward', () => {
+    expect(trimSfxStart(sound, 5, 0).t).toBe(1)
+  })
+})
+
+describe('sfxIn', () => {
+  const sfx = (t: number, file: string) => ({ t, file })
+  const all = [sfx(0, 'start.wav'), sfx(0.5, 'mid.wav'), sfx(1, 'end.wav')]
+
+  it('fires a sound the tick crossed', () => {
+    expect(sfxIn(all, 0.4, 0.6).map((s) => s.file)).toEqual(['mid.wav'])
+  })
+
+  it('fires a sound at zero only when the lap starts below it', () => {
+    expect(sfxIn(all, -1, 0).map((s) => s.file)).toEqual(['start.wav'])
+    expect(sfxIn(all, 0, 0.1)).toEqual([])
+  })
+
+  // Consecutive ticks must not fire the same sound twice, and must not skip one between them.
+  it('tiles a lap without gaps or repeats', () => {
+    const ticks = [-1, 0, 0.3, 0.5, 0.9, 1]
+    const fired = ticks.slice(1).flatMap((to, i) => sfxIn(all, ticks[i], to))
+    expect(fired.map((s) => s.file)).toEqual(['start.wav', 'mid.wav', 'end.wav'])
+  })
+
+  it('ignores sounds outside the slice', () => {
+    expect(sfxIn(all, 0.6, 0.9)).toEqual([])
   })
 })
 
