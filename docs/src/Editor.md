@@ -35,12 +35,18 @@ there — `[0, 0.2]` lifts a frame off the ground, `[0.1, 0]` nudges it right.
 
 | | |
 |---|---|
+| Left drag | Moves the frame you are looking at |
+| Middle or right drag | Pans the view |
+| The **zoom** slider | 0.25× to 4× — the view only, never the frame |
 | Arrow keys | Nudge by 0.01 units |
 | Shift + arrows | Nudge by 0.1 units |
 | Delete / Backspace | Removes the frame shown in the panel on the right |
 | The `arrows move:` button | Switches between one frame and all of them |
 | **Align all** | Snaps every frame's drawn pixels to bottom-centre |
 | **Align X only** | Horizontal only — leaves a jump or crouch alone |
+
+Panning and zooming change nothing in the file — the ground line and the
+dashed box move with the view, so what you align against stays honest.
 
 Use **Align all** when your frames were exported trimmed, or drawn on canvases of
 different sizes. If you drew everything on one canvas with the feet at the
@@ -74,8 +80,9 @@ folder.
 
 **A same-named file overwrites the old one.** Dropping `stand_1.png` onto a
 folder that already has one replaces its bytes — that is someone's artwork
-gone with no undo, so the message after a drop always splits out "N
-imported" from "M replaced". Watch for the second number.
+gone with no undo, so the message after a drop counts the two separately:
+"3 imported, 1 replaced" if both happened, and only the part that did
+happen otherwise. Watch for the "replaced" number.
 
 PNGs the game cannot decode are refused right there, by name. That is
 indexed/palette, 16-bit and interlaced files — see

@@ -51,7 +51,10 @@ export default function Inspector({ spec, index, onFrame, onSpec, onRemove }: Pr
                onChange={(v) => onFrame({ offset: [v, frame.offset[1]] })} />
           <Num label="offset y" value={frame.offset[1]}
                onChange={(v) => onFrame({ offset: [frame.offset[0], v] })} />
-          <Num label="scale" value={frame.scale} onChange={(v) => onFrame({ scale: v || 1 })} />
+          {/* v > 0, not `v || 1`: a negative number is truthy, and it would flip the sprite and
+              divide effectivePpu the wrong way - the same trap the note below guards ppu and
+              duration against. */}
+          <Num label="scale" value={frame.scale} onChange={(v) => onFrame({ scale: v > 0 ? v : 1 })} />
           <p className="mt-1 text-[10px] leading-tight text-gray-500">
             World units. 0, 0 is standing on the ground, centred.
           </p>

@@ -71,9 +71,9 @@ async function loadAsset(dir: FileSystemDirectoryHandle, name: string): Promise<
   const info = readPngHeader(bytes)
   return {
     name,
-    // Never revoked: Task 5 starts rendering these into <img>/canvas, and revoking on folder
-    // close would need every consumer torn down first. Until that exists, blob URLs accumulate
-    // for the tab's lifetime across repeated folder opens.
+    // Held until the character that owns it is replaced, then revoked by revokeAssets below -
+    // each import re-reads the whole character and mints a fresh URL per PNG, so without that
+    // every PNG's bytes stay pinned for the tab's lifetime.
     url: URL.createObjectURL(file),
     width: info?.width ?? 0,
     height: info?.height ?? 0,
@@ -189,6 +189,17 @@ export async function loadCharacter(
     appearanceBase,
     hadAppearanceJson: appearanceText !== null,
     s1Warning,
+  }
+}
+
+/**
+ * Releases the blob URLs of a character that has been replaced. Safe precisely because a
+ * LoadedCharacter is immutable and never comes back: nothing renders from its assets once a newer
+ * load has taken its place.
+ */
+export function revokeAssets(character: LoadedCharacter): void {
+  for (const motion of character.motions) {
+    for (const asset of motion.assets.values()) URL.revokeObjectURL(asset.url)
   }
 }
 

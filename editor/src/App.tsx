@@ -4,7 +4,7 @@ import Inspector from './Inspector'
 import Timeline from './Timeline'
 import {
   DEFAULT_BASE, LoadedCharacter, Mode, ensurePermission, importAssets, loadCharacter,
-  nameRejection, pickFolder, recallFolder, rememberFolder, writeFile,
+  nameRejection, pickFolder, recallFolder, rememberFolder, revokeAssets, writeFile,
 } from './fs'
 import { MOTION_NAMES, isSkill } from './motions'
 import { boundsOf } from './png'
@@ -15,6 +15,11 @@ import {
 } from './editing'
 
 const SUPPORTED = typeof window !== 'undefined' && 'showDirectoryPicker' in window
+
+/** What to show the user when a filesystem call rejects. DOMException.message is the useful part. */
+function why(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
 
 export default function App() {
   const [character, setCharacter] = useState<LoadedCharacter | null>(null)
@@ -96,6 +101,16 @@ export default function App() {
 
     prevMotionsRef.current = character.motions.map((m) => ({ folder: m.folder }))
   }, [character])
+
+  /**
+   * The only way `character` is set. Every load mints a fresh blob URL per PNG and an import
+   * re-reads the whole character, so the URLs of the character being replaced are released here -
+   * nothing renders from them once a newer load is on screen.
+   */
+  function replaceCharacter(next: LoadedCharacter) {
+    if (character && character !== next) revokeAssets(character)
+    setCharacter(next)
+  }
 
   const spec = specs[tab]
   // Timeline's pointerup handler is bound once, at the start of a drag, via a raw
@@ -236,17 +251,42 @@ export default function App() {
    * keeps its flag and its own Save button count.
    */
   async function save(plan: SavePlan) {
-    for (const i of plan.indices) {
-      await writeFile(character!.motions[i].handle, 'animation.json', serialiseSpec(specs[i]))
+    setProblem(null)
+    // A write can fail halfway (permission revoked, drive removed, file locked). Files already
+    // written stay written, so the only honest thing to do is stop, say which ones made it, and
+    // leave the rest dirty - a partial write nobody is told about is exactly what the
+    // confirmation dialog exists to prevent.
+    const written: number[] = []
+    let appearanceWritten = false
+    let failure: string | null = null
+    try {
+      for (const i of plan.indices) {
+        await writeFile(character!.motions[i].handle, 'animation.json', serialiseSpec(specs[i]))
+        written.push(i)
+      }
+      if (plan.appearance) {
+        await writeFile(character!.handle, 'appearance.json', JSON.stringify({ base }, null, 2) + '\n')
+        appearanceWritten = true
+      }
+    } catch (e) {
+      failure = why(e)
     }
-    if (plan.appearance) {
-      await writeFile(character!.handle, 'appearance.json', JSON.stringify({ base }, null, 2) + '\n')
+
+    const count = written.length + (appearanceWritten ? 1 : 0)
+    setSaved(count > 0 ? `Wrote ${count} file(s).` : null)
+    if (failure !== null) {
+      const done = written.map((i) => `motions/${character!.motions[i].folder}/animation.json`)
+      if (appearanceWritten) done.push('appearance.json')
+      setProblem(
+        `Save stopped after ${count} of ${plan.files.length} file(s): ${failure}\n` +
+        (done.length > 0 ? `Written: ${done.join(', ')}\n` : '') +
+        'Everything else is unchanged on disk and still marked unsaved.',
+      )
     }
-    setSaved(`Wrote ${plan.files.length} file(s).`)
     setDirty((prev) => {
       const next = new Set(prev)
-      for (const i of plan.indices) next.delete(i)
-      if (plan.appearance) next.delete(-1)
+      for (const i of written) next.delete(i)
+      if (appearanceWritten) next.delete(-1)
       return next
     })
     setPending(null)
@@ -254,12 +294,20 @@ export default function App() {
 
   // The only action that creates a directory, so it gets the same care as a write: the name is
   // typed deliberately (no default), and it only ever creates inside motions/ of the picked folder.
-  async function createMotion(name: string) {
+  async function createMotion(typed: string) {
+    // Trimmed: a trailing space yields a folder the plugin cannot match to a MOTION_DETAIL, and
+    // a trailing-space directory is awkward to remove again on Windows.
+    const name = typed.trim()
     if (!name) return
-    const root = await character!.handle.getDirectoryHandle('motions', { create: true })
-    await root.getDirectoryHandle(name, { create: true })
-    setCharacter(await loadCharacter(character!.handle, character!.mode))
-    setNewMotion('')
+    setProblem(null)
+    try {
+      const root = await character!.handle.getDirectoryHandle('motions', { create: true })
+      await root.getDirectoryHandle(name, { create: true })
+      replaceCharacter(await loadCharacter(character!.handle, character!.mode))
+      setNewMotion('')
+    } catch (e) {
+      setProblem(`Could not create motions/${name}: ${why(e)}`)
+    }
   }
 
   // Selection decides the target: a frame selected moves that frame, nothing selected moves
@@ -321,28 +369,42 @@ export default function App() {
     // depends only on whether playback is on at all.
   }, [playhead === null, spec?.duration, tab])
 
+  // Every path into a character goes through here, including the Reopen button, whose handle came
+  // out of IndexedDB and may point at a folder that has since been moved or deleted. Catching here
+  // rather than at each call site is what keeps that failure from being silent.
   async function open(handle: FileSystemDirectoryHandle, mode: Mode) {
     setProblem(null)
-    if (!(await ensurePermission(handle))) {
-      setProblem('Permission to read and write that folder was refused.')
-      return
+    try {
+      if (!(await ensurePermission(handle))) {
+        setProblem('Permission to read and write that folder was refused.')
+        return
+      }
+      const rejection = nameRejection(handle.name, mode)
+      if (rejection) {
+        setProblem(rejection)
+        return
+      }
+      const loaded = await loadCharacter(handle, mode)
+      await rememberFolder(handle, mode)
+      replaceCharacter(loaded)
+    } catch (e) {
+      setProblem(`Could not open ${handle.name}: ${why(e)}`)
     }
-    const rejection = nameRejection(handle.name, mode)
-    if (rejection) {
-      setProblem(rejection)
-      return
-    }
-    const loaded = await loadCharacter(handle, mode)
-    await rememberFolder(handle, mode)
-    setCharacter(loaded)
   }
 
   async function choose(mode: Mode) {
+    let handle: FileSystemDirectoryHandle
     try {
-      await open(await pickFolder(), mode)
-    } catch {
-      // The user dismissed the picker. Nothing to report.
+      handle = await pickFolder()
+    } catch (e) {
+      // AbortError is the user dismissing the picker - nothing to report. Anything else is a real
+      // failure, and reporting it as a cancellation is how a broken editor looks like a working one.
+      if (!(e instanceof DOMException && e.name === 'AbortError')) {
+        setProblem(`Could not open the folder picker: ${why(e)}`)
+      }
+      return
     }
+    await open(handle, mode)
   }
 
   if (!SUPPORTED) {
@@ -497,7 +559,20 @@ export default function App() {
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={async (e) => {
                     e.preventDefault()
-                    const result = await importAssets(character.motions[tab].handle, [...e.dataTransfer.files])
+                    const files = [...e.dataTransfer.files]
+                    setProblem(null)
+                    // Dropping a *folder* hands over a File whose arrayBuffer() rejects, and an
+                    // async handler that rejects takes the whole drop down without a word.
+                    let result
+                    try {
+                      result = await importAssets(character.motions[tab].handle, files)
+                    } catch (err) {
+                      setProblem(
+                        `Could not import ${files.map((f) => f.name).join(', ')}: ${why(err)}\n` +
+                        'Drop individual .png, .wav or .ogg files - a folder cannot be read this way.',
+                      )
+                      return
+                    }
                     if (result.rejected.length > 0) {
                       setProblem(result.rejected.map((r) => `${r.name}: ${r.why}`).join('\n'))
                     }
@@ -513,7 +588,7 @@ export default function App() {
                       // Re-read the folder so the new files appear as assets. They are not frames
                       // yet - see the "+ name" buttons below - loadCharacter only puts every PNG
                       // into spec.frames when there was no animation.json to begin with.
-                      setCharacter(await loadCharacter(character.handle, character.mode))
+                      replaceCharacter(await loadCharacter(character.handle, character.mode))
                     }
                   }}
                 >
