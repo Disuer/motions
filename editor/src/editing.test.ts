@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  alignFrame, dirtyMotions, nudgeAllFrames, planSave, remapFrameIndex, sortFramesByTime,
-  spaceEvenlyFrames,
+  alignFrame, dirtyMotions, nudgeAllFrames, planSave, remapAfterRemoval, remapFrameIndex,
+  removeFrame, sortFramesByTime, spaceEvenlyFrames,
 } from './editing'
 import { LoadedCharacter } from './fs'
 import { Frame } from './spec'
@@ -134,6 +134,62 @@ describe('sortFramesByTime', () => {
     const frames = [frame('a.png', [0, 0]), frame('b.png', [0, 0])]
     frames[1].t = 0.1
     expect(sortFramesByTime(frames).map((f) => f.sprite)).toEqual(['a.png', 'b.png'])
+  })
+})
+
+describe('removeFrame', () => {
+  const frames = [frame('a.png', [0, 0]), frame('b.png', [0.1, 0]), frame('c.png', [0.2, 0])]
+
+  it('removes the first frame, keeping the rest in order with their own fields', () => {
+    const out = removeFrame(frames, 0)
+    expect(out.map((f) => f.sprite)).toEqual(['b.png', 'c.png'])
+    expect(out[0].offset).toEqual([0.1, 0])
+    expect(out[1].offset).toEqual([0.2, 0])
+  })
+
+  it('removes a middle frame, keeping the others paired with their own sprite', () => {
+    const out = removeFrame(frames, 1)
+    expect(out.map((f) => f.sprite)).toEqual(['a.png', 'c.png'])
+  })
+
+  it('removes the last frame', () => {
+    const out = removeFrame(frames, 2)
+    expect(out.map((f) => f.sprite)).toEqual(['a.png', 'b.png'])
+  })
+
+  it('does not mutate the input array', () => {
+    removeFrame(frames, 1)
+    expect(frames.map((f) => f.sprite)).toEqual(['a.png', 'b.png', 'c.png'])
+  })
+
+  it('refuses to remove the last remaining frame, returning the same array unchanged', () => {
+    const one = [frame('only.png', [0, 0])]
+    const out = removeFrame(one, 0)
+    expect(out).toBe(one) // same reference: callers can tell nothing happened
+    expect(out.map((f) => f.sprite)).toEqual(['only.png'])
+  })
+})
+
+describe('remapAfterRemoval', () => {
+  it('shifts an index after the removed one down by one', () => {
+    expect(remapAfterRemoval(2, 0, 2)).toBe(1)
+  })
+
+  it('leaves an index before the removed one untouched', () => {
+    expect(remapAfterRemoval(0, 2, 2)).toBe(0)
+  })
+
+  it('clamps the removed index itself into the new range', () => {
+    // 3 frames, index 2 (last) removed, 2 remain (valid indices 0..1) - clamps to 1.
+    expect(remapAfterRemoval(2, 2, 2)).toBe(1)
+  })
+
+  it('clamps to 0 when the only two frames become one and the first is removed', () => {
+    expect(remapAfterRemoval(0, 0, 1)).toBe(0)
+  })
+
+  it('passes null through unchanged: no selection stays no selection', () => {
+    expect(remapAfterRemoval(null, 1, 2)).toBeNull()
   })
 })
 

@@ -10,8 +10,8 @@ import { MOTION_NAMES, isSkill } from './motions'
 import { boundsOf } from './png'
 import { AnimationSpec, DEFAULT_FPS, Frame, frameIndexAt, serialiseSpec } from './spec'
 import {
-  alignFrame, nudgeAllFrames, planSave, remapFrameIndex, SavePlan, sortFramesByTime,
-  spaceEvenlyFrames,
+  alignFrame, nudgeAllFrames, planSave, remapAfterRemoval, remapFrameIndex, removeFrame, SavePlan,
+  sortFramesByTime, spaceEvenlyFrames,
 } from './editing'
 
 const SUPPORTED = typeof window !== 'undefined' && 'showDirectoryPicker' in window
@@ -114,6 +114,24 @@ export default function App() {
     })
   }
 
+  /**
+   * Removes frame `i` and never the PNG - see removeFrame's doc. Refuses (silently, same as
+   * removeFrame itself) on a motion's last frame, so it never writes a spec.frames = [] that
+   * parseSpec would reject on reload. frameIndex and selected are both remapped by position, not
+   * left to drift: this project has already shipped a crash (Task 6) and a silent mis-edit
+   * (Task 7) from an index surviving a frames-array change unremapped.
+   */
+  function removeSelectedFrame(i: number) {
+    const before = spec.frames.length
+    if (before <= 1) return
+    editSpec((s) => {
+      s.frames = removeFrame(s.frames, i)
+      return s
+    })
+    setFrameIndex((fi) => remapAfterRemoval(fi, i, before - 1))
+    setSelected((sel) => remapAfterRemoval(sel, i, before - 1))
+  }
+
   function spaceEvenly(fps: number) {
     editSpec((s) => {
       const spaced = spaceEvenlyFrames(s.frames, fps)
@@ -212,16 +230,27 @@ export default function App() {
       // meant to be an honest, frozen snapshot of what Save will write, so nothing - including an
       // arrow-key nudge of a clean tab sitting behind the dialog - may change editor state while
       // it's open.
-      if (pending) return
+      if (pending || !spec) return
+      // Let form controls that own their own arrow-key behaviour handle it themselves - a select
+      // (e.g. the filter dropdown) cycles its options on ArrowUp/Down, and without this guard
+      // that gets suppressed by preventDefault() below while a frame is silently nudged anyway.
+      // Same guard covers Delete/Backspace: it must not fire while someone is editing text.
+      const editable = ['INPUT', 'SELECT', 'TEXTAREA']
+      if (editable.includes(document.activeElement?.tagName ?? '')) return
+
+      // Targets frameIndex - the frame currently shown in the Inspector - not `selected`, which
+      // only exists to steer arrow-key nudges and is often null ("arrows move ALL frames"). A
+      // frame is always being viewed, so Delete/Backspace always has something to act on.
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        removeSelectedFrame(frameIndex)
+        return
+      }
+
       const step = e.shiftKey ? 0.1 : 0.01
       const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0
       const dy = e.key === 'ArrowUp' ? step : e.key === 'ArrowDown' ? -step : 0
       if (dx === 0 && dy === 0) return
-      // Let form controls that own their own arrow-key behaviour handle it themselves - a select
-      // (e.g. the filter dropdown) cycles its options on ArrowUp/Down, and without this guard
-      // that gets suppressed by preventDefault() below while a frame is silently nudged anyway.
-      const editable = ['INPUT', 'SELECT', 'TEXTAREA']
-      if (editable.includes(document.activeElement?.tagName ?? '')) return
       e.preventDefault()
 
       if (selected === null) nudgeAll(dx, dy)
@@ -231,7 +260,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selected, spec, tab, pending])
+  }, [selected, spec, tab, pending, frameIndex])
 
   // Steps through frames with the same frameIndexAt lookup the runtime uses, rather than
   // tweening — a blended preview would have authors aligning frames against a lie.
@@ -464,6 +493,7 @@ export default function App() {
                   index={frameIndex}
                   onFrame={(p) => updateFrame(frameIndex, p)}
                   onSpec={(p) => editSpec((s) => ({ ...s, ...p }))}
+                  onRemove={() => removeSelectedFrame(frameIndex)}
                 />
                 <div className="w-40 shrink-0 overflow-y-auto border-l p-3">
                   <div className="text-xs font-medium">unused assets</div>

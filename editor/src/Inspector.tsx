@@ -26,16 +26,26 @@ interface Props {
   index: number
   onFrame: (patch: Partial<Frame>) => void
   onSpec: (patch: Partial<AnimationSpec>) => void
+  onRemove: () => void
 }
 
-export default function Inspector({ spec, index, onFrame, onSpec }: Props) {
+export default function Inspector({ spec, index, onFrame, onSpec, onRemove }: Props) {
   const frame = spec.frames[index]
 
   return (
     <div className="w-56 shrink-0 border-l p-3">
       {frame ? (
         <>
-          <div className="text-xs font-medium">frame {index + 1}</div>
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-medium">frame {index + 1}</div>
+            {/* Disabled rather than hidden on the last frame: an empty frames array is a spec
+                the game (and the editor) can no longer reopen, so removeFrame refuses it - the
+                button should say so up front instead of silently doing nothing on click. */}
+            <button onClick={onRemove} disabled={spec.frames.length <= 1}
+                    className="rounded border px-1.5 py-0.5 text-[10px] text-red-700 disabled:text-gray-400">
+              remove frame
+            </button>
+          </div>
           <div className="truncate text-xs text-gray-500" title={frame.sprite}>{frame.sprite}</div>
           <Num label="offset x" value={frame.offset[0]}
                onChange={(v) => onFrame({ offset: [v, frame.offset[1]] })} />

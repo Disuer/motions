@@ -58,6 +58,32 @@ export function spaceEvenlyFrames(frames: Frame[], fps: number): { frames: Frame
 }
 
 /**
+ * Removes frame `i`. Never touches disk - the PNG that frame referenced simply stops being
+ * referenced, so it reappears in the "unused assets" list; deleting bytes is not this function's
+ * job (see planSave/save above: nothing in this editor ever deletes a file). Refuses to drop the
+ * last frame - an empty `frames` array is a spec `parseSpec` itself rejects on reload, so removing
+ * it would write a file the editor (and the game) can no longer open. Callers can tell nothing
+ * happened because the returned array is the same array, by reference.
+ */
+export function removeFrame(frames: Frame[], i: number): Frame[] {
+  if (frames.length <= 1) return frames
+  return frames.filter((_, idx) => idx !== i)
+}
+
+/**
+ * Where a frame/selection index should land after removeFrame(frames, removed, ...). Removal
+ * doesn't reorder anything else - it only closes a gap - so this is plain arithmetic rather than
+ * the identity lookup remapFrameIndex needs for a sort: the removed index maps to itself, clamped
+ * into range (there is no "same frame" to follow, since it's gone); anything after it shifts down
+ * one; anything before is untouched. `null` passes through - no selection stays no selection.
+ */
+export function remapAfterRemoval<T extends number | null>(index: T, removed: number, lengthAfter: number): T {
+  if (index === null) return null as T
+  if (index === removed) return Math.min(index, lengthAfter - 1) as T
+  return (index > removed ? index - 1 : index) as T
+}
+
+/**
  * -1 is not a motion index; it is the marker `dirty` uses for "appearance.json changed" (see the
  * appearance-base field below). Every loop over `dirty` has to filter it out before indexing
  * character.motions, or it reads motions[-1]. Pulled out so that guard lives in exactly one place.
