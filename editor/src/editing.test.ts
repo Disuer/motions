@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
-  addFrameAt, alignFrame, clampFrameIndex, dirtyMotions, nudgeAllFrames, planSave,
+  addFrameAt, addSfx, alignFrame, carryOver, carryOverNamed, clampFrameIndex, dirtyMotions,
+  duplicateFrame,
+  nudgeAllFrames, removeSfx,
+  planSave,
   remapAfterRemoval, remapFrameIndex, removeFrame, sortFramesByTime, spaceEvenlyFrames,
 } from './editing'
 import { LoadedCharacter } from './fs'
-import { Frame } from './spec'
+import { AnimationSpec, Frame } from './spec'
 
 function frame(sprite: string, offset: [number, number], scale = 1): Frame {
   return { t: 0, sprite, offset, scale }
@@ -256,7 +259,7 @@ describe('remapAfterRemoval', () => {
 })
 
 describe('remapFrameIndex', () => {
-  // A(t=0), B(t=0.1), C(t=0.2) — then C is dragged to t=0.05, landing between A and B.
+  // A(t=0), B(t=0.1), C(t=0.2), then C is dragged to t=0.05, landing between A and B.
   // Post-sort order is [A, C, B]: C moved from index 2 to index 1, and B moved from index 1
   // to index 2 even though B itself was never touched by the drag.
   const pre = [frame('a.png', [0, 0]), frame('b.png', [0, 0]), frame('c.png', [0, 0])]
@@ -288,9 +291,15 @@ describe('remapFrameIndex', () => {
   })
 })
 
-/** planSave only reads .mode and .motions[i].folder; everything else is irrelevant to the plan. */
-function character(mode: 'appearance' | 'override', folders: string[]): LoadedCharacter {
-  return { mode, motions: folders.map((folder) => ({ folder })) } as unknown as LoadedCharacter
+/** planSave reads .mode, .motions[i].folder, .skills[i].name and .appearanceReadable. */
+function character(
+  mode: 'appearance' | 'override',
+  folders: string[],
+  appearanceReadable = true,
+): LoadedCharacter {
+  return {
+    mode, appearanceReadable, motions: folders.map((folder) => ({ folder })), skills: [],
+  } as unknown as LoadedCharacter
 }
 
 describe('dirtyMotions', () => {
@@ -314,24 +323,42 @@ describe('planSave', () => {
   it('lists only the dirty motions, not clean ones', () => {
     const c = character('override', ['Idle', 'S1', 'S2'])
     const plan = planSave(c, new Set([1]))
-    expect(plan.indices).toEqual([1])
+    expect(plan.motions).toEqual(['S1'])
     expect(plan.files).toEqual(['motions/S1/animation.json'])
   })
 
   it('lists every dirty motion, in no particular guaranteed order beyond what the Set gives', () => {
     const c = character('override', ['Idle', 'S1', 'S2'])
     const plan = planSave(c, new Set([0, 2]))
-    expect(new Set(plan.indices)).toEqual(new Set([0, 2]))
+    expect(new Set(plan.motions)).toEqual(new Set(['Idle', 'S2']))
     expect(new Set(plan.files)).toEqual(
       new Set(['motions/Idle/animation.json', 'motions/S2/animation.json']),
     )
   })
 
-  it('includes appearance.json in new-appearance mode', () => {
+  // It used to be included on EVERY save of an appearance character. Combined with the editor
+  // falling back to the default donor for an appearance.json it could not parse, that meant one
+  // unrelated frame nudge silently replaced the author's donor with Yi Sang.
+  it('leaves appearance.json alone when the donor was not touched', () => {
     const c = character('appearance', ['Idle'])
     const plan = planSave(c, new Set([0]))
+    expect(plan.appearance).toBe(false)
+    expect(plan.files).toEqual(['motions/Idle/animation.json'])
+  })
+
+  it('includes appearance.json once the donor is edited', () => {
+    const c = character('appearance', ['Idle'])
+    const plan = planSave(c, new Set([0, -1]))
     expect(plan.appearance).toBe(true)
     expect(plan.files).toEqual(['motions/Idle/animation.json', 'appearance.json'])
+  })
+
+  // The donor on screen is a fallback, not theirs. Writing it back would overwrite the real one.
+  it('never writes appearance.json back when the file on disk could not be read', () => {
+    const c = character('appearance', ['Idle'], false)
+    const plan = planSave(c, new Set([-1]))
+    expect(plan.appearance).toBe(false)
+    expect(plan.files).toEqual([])
   })
 
   it('excludes appearance.json in override mode', () => {
@@ -341,10 +368,10 @@ describe('planSave', () => {
     expect(plan.files).toEqual(['motions/Idle/animation.json'])
   })
 
-  it('still writes appearance.json in appearance mode when only the base changed (-1 only)', () => {
+  it('writes appearance.json alone when only the base changed (-1 only)', () => {
     const c = character('appearance', ['Idle', 'S1'])
     const plan = planSave(c, new Set([-1]))
-    expect(plan.indices).toEqual([])
+    expect(plan.motions).toEqual([])
     expect(plan.appearance).toBe(true)
     expect(plan.files).toEqual(['appearance.json'])
   })
@@ -352,7 +379,7 @@ describe('planSave', () => {
   it('the -1 sentinel never produces a bogus motions/-1/... path', () => {
     const c = character('override', ['Idle'])
     const plan = planSave(c, new Set([-1, 0]))
-    expect(plan.indices).toEqual([0])
+    expect(plan.motions).toEqual(['Idle'])
     expect(plan.files.every((f) => !f.includes('-1'))).toBe(true)
     expect(plan.files).toEqual(['motions/Idle/animation.json'])
   })
@@ -360,7 +387,7 @@ describe('planSave', () => {
   it('is empty when nothing is dirty and the character is in override mode', () => {
     const c = character('override', ['Idle'])
     const plan = planSave(c, new Set())
-    expect(plan.indices).toEqual([])
+    expect(plan.motions).toEqual([])
     expect(plan.files).toEqual([])
   })
 
@@ -374,7 +401,215 @@ describe('planSave', () => {
     const dirty = new Set([0])
     const plan = planSave(c, dirty)
     dirty.add(1) // simulates an edit made after the confirmation dialog opened
-    expect(plan.indices).toEqual([0])
+    expect(plan.motions).toEqual(['Idle'])
     expect(plan.files).toEqual(['motions/Idle/animation.json'])
+  })
+})
+
+// The switch case is the one that can lose an author's work without any write happening, and the
+// re-read case is the one that used to. Both go through carryOver, and they must not agree.
+describe('carryOver', () => {
+  const spec = (duration: number): AnimationSpec =>
+    ({ duration, ppu: 200, frames: [], sfx: [] } as unknown as AnimationSpec)
+  const motion = (folder: string, duration = 1) => ({ folder, spec: spec(duration) })
+
+  const EDITED = spec(9.9)   // stands in for an unsaved edit: nothing on disk has this duration
+
+  it('keeps an unsaved edit through a re-read of the same character', () => {
+    const next = carryOver(
+      ['Idle', 'S1'], [EDITED, spec(1)], new Set([0]), 0,
+      [motion('Idle'), motion('S1')], false,
+    )
+    expect(next.specs[0]).toBe(EDITED)
+    expect(next.dirty).toEqual(new Set([0]))
+  })
+
+  // The bug that made switching characters unsafe: both have an Idle, and matching by name handed
+  // the incoming character the outgoing one's unsaved spec - an edit to a file it never came from.
+  it('carries nothing into a different character, however well the folder names line up', () => {
+    const next = carryOver(
+      ['Idle', 'S1'], [EDITED, EDITED], new Set([0, 1, -1]), 1,
+      [motion('Idle', 2), motion('S1', 2)], true,
+    )
+    expect(next.specs.map((s) => s.duration)).toEqual([2, 2])
+    expect(next.specs[0]).not.toBe(EDITED)
+    expect(next.dirty).toEqual(new Set())   // including -1, the donor base of the character we left
+    expect(next.tab).toBe(0)
+  })
+
+  it('follows a folder that a new motion sorted ahead of, rather than the position it held', () => {
+    // Creating "Attack" puts it first; the S1 edit and the tab must both move with the name.
+    const next = carryOver(
+      ['Idle', 'S1'], [spec(1), EDITED], new Set([1]), 1,
+      [motion('Attack'), motion('Idle'), motion('S1')], false,
+    )
+    expect(next.specs[2]).toBe(EDITED)
+    expect(next.dirty).toEqual(new Set([2]))
+    expect(next.tab).toBe(2)
+  })
+
+  it('clones from disk, so editing a fresh spec cannot write through to the loaded character', () => {
+    const disk = motion('Idle')
+    const next = carryOver([], [], new Set(), 0, [disk], false)
+    expect(next.specs[0]).not.toBe(disk.spec)
+    expect(next.specs[0]).toEqual(disk.spec)
+  })
+
+  it('keeps a dirty donor base through a re-read, and only through a re-read', () => {
+    expect(carryOver([], [], new Set([-1]), 0, [motion('Idle')], false).dirty).toEqual(new Set([-1]))
+    expect(carryOver([], [], new Set([-1]), 0, [motion('Idle')], true).dirty).toEqual(new Set())
+  })
+})
+
+// planSave is what the confirmation dialog shows and exactly what save() writes. A skill file
+// missing from that list would be written without ever appearing on screen.
+describe('planSave with skill files', () => {
+  const character = {
+    mode: 'override',
+    motions: [{ folder: 'Idle' }, { folder: 'S1' }],
+    skills: [{ name: 'S1.json' }, { name: 'S2.json' }],
+  } as unknown as LoadedCharacter
+
+  it('lists dirty skill files alongside the motions', () => {
+    const plan = planSave(character, new Set([1]), new Set([0, 1]))
+    expect(plan.files).toEqual(['motions/S1/animation.json', 'S1.json', 'S2.json'])
+    expect(plan.skills).toEqual(['S1.json', 'S2.json'])
+  })
+
+  it('writes nothing when nothing is dirty', () => {
+    expect(planSave(character, new Set(), new Set()).files).toEqual([])
+  })
+
+  // dirtySkills survives a re-read that can shorten the list, so an index with no file behind it
+  // has to fall out here rather than crash save() on character.skills[i].name.
+  it('drops an index no longer backed by a file', () => {
+    expect(planSave(character, new Set(), new Set([0, 7])).skills).toEqual(['S1.json'])
+  })
+
+  // The reason the plan holds names at all: it is frozen when the dialog opens, but a folder
+  // re-read already in flight can land before Write and re-sort the arrays underneath it. An
+  // index would then address a different file than the one the dialog listed.
+  it('names files rather than positions, so a re-sort cannot redirect the write', () => {
+    const before = {
+      mode: 'override', appearanceReadable: true,
+      motions: [{ folder: 'Idle' }, { folder: 'S1' }],
+      skills: [],
+    } as unknown as LoadedCharacter
+    const plan = planSave(before, new Set([0]))
+    expect(plan.motions).toEqual(['Idle'])
+    // A new motion sorting in ahead would make the frozen index 0 mean 'Attack'; the name does not
+    // move, and save() resolves it against the live array.
+    expect(plan.files).toEqual(['motions/Idle/animation.json'])
+  })
+
+  it('defaults to no skill files, so the motion-only callers are unaffected', () => {
+    expect(planSave(character, new Set([0])).skills).toEqual([])
+  })
+})
+
+describe('carryOverNamed', () => {
+  const disk = (i: number) => `disk-${i}`
+
+  it('keeps an edit whose file is still there, through a reorder', () => {
+    const out = carryOverNamed(
+      ['S1.json', 'S2.json'], ['edited-1', 'edited-2'], new Set([1]),
+      ['S0.json', 'S1.json', 'S2.json'], disk, false,
+    )
+    expect(out.items).toEqual(['disk-0', 'edited-1', 'edited-2'])
+    expect(out.dirty).toEqual(new Set([2]))
+  })
+
+  it('carries nothing across a switch, however well the names match', () => {
+    const out = carryOverNamed(
+      ['S1.json'], ['edited-1'], new Set([0]),
+      ['S1.json'], disk, true,
+    )
+    expect(out.items).toEqual(['disk-0'])
+    expect(out.dirty).toEqual(new Set())
+  })
+
+  it('reads from disk for a file that was not open before', () => {
+    const out = carryOverNamed([], [], new Set(), ['S1.json'], disk, false)
+    expect(out.items).toEqual(['disk-0'])
+  })
+})
+
+// Sounds are the one array on the timeline that is deliberately never re-sorted, and the reason
+// is worth pinning: a stable index is what lets the inspector keep pointing at the same sound.
+describe('addSfx / removeSfx', () => {
+  const sfx = (t: number, file: string) => ({ t, file })
+
+  it('appends without re-sorting, so existing indices keep meaning the same sound', () => {
+    const before = [sfx(0.5, 'late.wav')]
+    const after = addSfx(before, 'early.wav', 0.1)
+    expect(after.map((s) => s.file)).toEqual(['late.wav', 'early.wav'])
+    expect(after[0]).toBe(before[0])
+  })
+
+  it('never places a sound before the start of the motion', () => {
+    expect(addSfx([], 'a.wav', -3)[0].t).toBe(0)
+  })
+
+  it('does not mutate the array it was given', () => {
+    const before = [sfx(0, 'a.wav')]
+    addSfx(before, 'b.wav', 1)
+    expect(before).toHaveLength(1)
+  })
+
+  // Unlike removeFrame, which refuses to drop the last one: an empty sfx array is a perfectly
+  // valid motion, and parseSpec reads it back happily.
+  it('removes by index, and will empty the list', () => {
+    const before = [sfx(0, 'a.wav'), sfx(1, 'b.wav')]
+    expect(removeSfx(before, 0).map((s) => s.file)).toEqual(['b.wav'])
+    expect(removeSfx(removeSfx(before, 0), 0)).toEqual([])
+  })
+})
+
+// The only way to add a frame used to be picking an asset that was not on the timeline yet, so a
+// sprite already placed could not be placed again and a pose could not be held.
+describe('duplicateFrame', () => {
+  const at = (t: number, sprite: string, offset: [number, number] = [0, 0], scale = 1) =>
+    ({ t, sprite, offset, scale })
+
+  it('puts the copy halfway to the next frame, keeping offset and scale', () => {
+    const frames = [at(0, 'a.png', [0.3, -0.2], 2), at(1, 'b.png')]
+    const out = duplicateFrame(frames, 0, 1)
+
+    expect(out.frames.map((f) => f.t)).toEqual([0, 0.5, 1])
+    expect(out.frames[1]).toMatchObject({ sprite: 'a.png', offset: [0.3, -0.2], scale: 2 })
+    expect(out.duration).toBe(1)
+  })
+
+  // Sharing a t is not invalid, but frameIndexAt resolves by position, so the copy would never be
+  // the frame the preview or the game picks.
+  it('never lands the copy on the same time as its source', () => {
+    const out = duplicateFrame([at(0.5, 'a.png'), at(0.5, 'b.png')], 0, 1)
+    expect(out.frames.filter((f) => f.sprite === 'a.png')).toHaveLength(2)
+  })
+
+  it('extends the motion when the frame being copied is the last one', () => {
+    const out = duplicateFrame([at(0, 'a.png')], 0, 0.5)
+    expect(out.frames.map((f) => f.t)).toEqual([0, 0.5])
+    expect(out.duration).toBeCloseTo(0.5 + 1 / 12, 9)
+  })
+
+  it('copies the offset array rather than sharing it, so moving one does not move both', () => {
+    const frames = [at(0, 'a.png', [1, 2]), at(1, 'b.png')]
+    const out = duplicateFrame(frames, 0, 1)
+    out.frames[1].offset[0] = 99
+    expect(out.frames[0].offset[0]).toBe(1)
+  })
+
+  it('does nothing for an index that is not there', () => {
+    const frames = [at(0, 'a.png')]
+    const out = duplicateFrame(frames, 5, 1)
+    expect(out.frames).toBe(frames)
+    expect(out.duration).toBe(1)
+  })
+
+  it('does not mutate the array it was given', () => {
+    const frames = [at(0, 'a.png'), at(1, 'b.png')]
+    duplicateFrame(frames, 0, 1)
+    expect(frames).toHaveLength(2)
   })
 })

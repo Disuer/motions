@@ -1,6 +1,6 @@
 # Sprite Motions (no Unity)
 
-For a motion that is just sprite frames — no custom particles or shaders — you do
+For a motion that is just sprite frames, with no custom particles or shaders, you do
 not need Unity at all. Drop PNGs in a folder and the plugin animates them.
 
 ## The simplest version
@@ -58,7 +58,7 @@ You can also [write it in the browser](Editor.md) instead of by hand.
 ### Seconds, not fractions
 
 Times here are **seconds**. This is different from `S1.json`, where times are a
-fraction of `totalDuration` — see [JSON Reference](JsonReference.md). The difference
+fraction of `totalDuration`. See [JSON Reference](JsonReference.md). The difference
 exists because `animation.json` is the file that decides how long the motion is, so
 there is nothing for a fraction to be relative to.
 
@@ -66,7 +66,7 @@ there is nothing for a fraction to be relative to.
 
 By default each frame is placed **centred left-to-right, with its bottom edge on the
 ground**. So if you draw a character standing on the bottom of the canvas, it just
-works — no `offset` needed.
+works, with no `offset` needed.
 
 `offset` is there for when it doesn't. `[0, 0.2]` lifts the frame off the ground by
 0.2 units; `[0.1, 0]` nudges it right. Use it to line up frames drawn on
@@ -94,14 +94,14 @@ Folder names match the motion, exactly like timeline asset names do for bundles:
 coin two reuses `S1`. Add the numbered folders only when you want each coin to look
 different.
 
-Non-skill motions do not support `_N` variants yet — `Idle_1` is ignored. Bundles
+Non-skill motions do not support `_N` variants yet: `Idle_1` is ignored. Bundles
 still do.
 
 ## Attacks that get cut short
 
 If your attack animation stops partway through, the culprit is almost always
 `hitCheckers` in your `S1.json`. It marks the point where the coin may hand off, and
-if you have written an `S1.json` without one, it defaults to **15%** of the coin —
+if you have written an `S1.json` without one, it defaults to **15%** of the coin,
 so a two second animation stops after 0.3s.
 
 ```json
@@ -114,7 +114,7 @@ do this for you.
 ## Your PNGs
 
 Save them as ordinary 8-bit RGB or RGBA PNGs. **Indexed / palette PNGs will not
-load** — some tools export those by default, so if a frame goes missing, re-save it
+load**. Some tools export those by default, so if a frame goes missing, re-save it
 as a normal PNG. Greyscale is fine; 16-bit and interlaced are not.
 
 ## Mixing with bundles
@@ -131,7 +131,7 @@ bundle for your custom VFX prefabs.
 ## What still needs Unity
 
 Custom particles, shaders and materials. Those are real Unity prefabs and there is
-no way around building them in the editor — see [Bundles](Bundles.md) and
+no way around building them in the editor. See [Bundles](Bundles.md) and
 [VFX](VFX.md).
 
 You can still reuse the **game's own** VFX with no bundle at all, using the `vfx`

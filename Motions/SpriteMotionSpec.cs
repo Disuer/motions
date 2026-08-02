@@ -37,7 +37,7 @@ public class AnimationSpec
 
 /// <summary>
 /// Pure parsing and maths for bundle-free sprite motions. Deliberately free of UnityEngine and
-/// interop types so it can be exercised by Motions.Tests without a running game — which is also
+/// interop types so it can be exercised by Motions.Tests without a running game, which is also
 /// why folder parsing yields a motion name string rather than a MOTION_DETAIL.
 /// </summary>
 public static class SpriteMotionSpec
@@ -137,7 +137,7 @@ public static class SpriteMotionSpec
 
     /// <summary>
     /// Index of the frame showing at <paramref name="t"/>, stepped. Clamps to the first frame before
-    /// the start — the sandbox renderer replaces the original, so showing nothing means an invisible
+    /// the start: the sandbox renderer replaces the original, so showing nothing means an invisible
     /// character, which is always worse than showing frame zero early.
     /// </summary>
     public static int FrameIndexAt(double[] times, double t)

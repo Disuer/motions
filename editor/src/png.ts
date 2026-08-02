@@ -37,9 +37,9 @@ export function readPngHeader(bytes: Uint8Array): PngInfo | null {
  */
 export function pngRejection(info: PngInfo | null): string | null {
   if (!info) return 'not a PNG'
-  if (info.colorType === 3) return 'indexed / palette PNG — re-save it as 8-bit RGB or RGBA'
-  if (info.bitDepth !== 8) return `${info.bitDepth}-bit PNG — re-save it as 8-bit`
-  if (info.interlace !== 0) return 'interlaced PNG — re-save it without interlacing'
+  if (info.colorType === 3) return 'indexed / palette PNG, re-save it as 8-bit RGB or RGBA'
+  if (info.bitDepth !== 8) return `${info.bitDepth}-bit PNG, re-save it as 8-bit`
+  if (info.interlace !== 0) return 'interlaced PNG, re-save it without interlacing'
   return null
 }
 

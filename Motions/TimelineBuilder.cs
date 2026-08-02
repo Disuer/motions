@@ -429,7 +429,7 @@ public static class TimelineBuilder
             SetupBattleCamZoomFromJson(onBattleCamZoomTrack, coinData);
             SetupBattleCamRotateFromJson(onBattleCamRotateTrack, coinData);
 
-            // Native camera shake markers — CharacterApperacneResiver handles these automatically.
+            // Native camera shake markers: CharacterApperacneResiver handles these automatically.
             SetupCameraShakeMarkers(appearanceTrack, coinData);
 
             // VFX: coinData.vfx indices into originalVfxTracks (1-indexed)

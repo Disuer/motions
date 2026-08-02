@@ -9,7 +9,7 @@ namespace Motions;
 
 /// <summary>
 /// Central static container for all motion-related caches and asset-lookup helpers.
-/// No Harmony patches, no timeline construction — just data.
+/// No Harmony patches, no timeline construction, just data.
 /// </summary>
 public static class MotionData
 {
@@ -102,7 +102,7 @@ public static class MotionData
     /// per-coin folder. A multi-coin skill restarts the motion on every coin, so without this a
     /// single S1/ folder animates coin one and leaves the rest blank. Supplying S1_1/, S1_2/ is
     /// how you give each coin its own animation; supplying only S1/ reuses it for all of them.
-    /// Bundles keep their stricter behaviour — a missing coin asset there means no custom motion.
+    /// Bundles keep their stricter behaviour: a missing coin asset there means no custom motion.
     /// </summary>
     public static bool TryGetSpriteMotion(string appearanceID, MOTION_DETAIL detail, int index, out SpriteMotion motion)
     {

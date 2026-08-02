@@ -1,4 +1,6 @@
-import { AnimationSpec, compareNatural, defaultSpec, parseSpec } from './spec'
+import { AnimationSpec, compareNatural, defaultSpec, parseSpec, stripJsoncExtras } from './spec'
+import { Skill, parseSkill } from './skill'
+import { MOTION_NAMES } from './motions'
 import { pngRejection, readPngHeader } from './png'
 
 export type Mode = 'appearance' | 'override'
@@ -25,13 +27,34 @@ export interface LoadedMotion {
   error: string | null
 }
 
+/** One skill file (S1.json and friends), which sits at the character folder, not in a motion. */
+export interface LoadedSkill {
+  name: string
+  /** null when the file could not be parsed. The editor shows the error rather than the file. */
+  skill: Skill | null
+  error: string | null
+  /**
+   * The bytes as read. Kept so a file the editor cannot parse is never rewritten from a guess:
+   * without it, "open, fail to parse, save" would replace someone's file with an empty one.
+   */
+  text: string
+  /** The hitCheckers advice for this file, or null when every coin already has one. */
+  warning: string | null
+}
+
 export interface LoadedCharacter {
   handle: FileSystemDirectoryHandle
   name: string
   mode: Mode
   motions: LoadedMotion[]
+  skills: LoadedSkill[]
   appearanceBase: string
   hadAppearanceJson: boolean
+  /**
+   * False when an appearance.json exists but could not be read. The donor shown is then a
+   * fallback, not the author's, so writing it back would replace their choice with a guess.
+   */
+  appearanceReadable: boolean
   s1Warning: string | null
 }
 
@@ -42,6 +65,125 @@ export function pickFolder(): Promise<FileSystemDirectoryHandle> {
   return window.showDirectoryPicker({ mode: 'readwrite' })
 }
 
+/** The two folders the plugin walks down from a mod root (Motions.cs:50,77), and what each means. */
+const ROOTS = new Map<string, Mode>([
+  ['motion_appearances', 'appearance'],
+  ['custom_motions', 'override'],
+])
+
+export interface Candidate {
+  handle: FileSystemDirectoryHandle
+  /**
+   * null means the kind could not be worked out and someone has to say: the folder was picked on
+   * its own, so there is no motion_appearances/ or custom_motions/ above it to read it off, and no
+   * appearance.json inside it either. Only ever null for a single directly-picked folder.
+   */
+  mode: Mode | null
+  /** Shown in the picker when a mod holds more than one character. */
+  path: string
+}
+
+/**
+ * The three names the plugin refuses to treat as characters under custom_motions: they hold
+ * bundles for the dashboard, the screen border and buff effects (Motions.cs:82,97,113). Substring
+ * matching, not equality, because that is how the plugin tests them.
+ */
+const RESERVED = ['DASHBOARD', 'CUSTOMSCREEN', 'MOTIONBUFF_']
+
+/**
+ * Only under custom_motions. The plugin's checks for these live inside that loop alone
+ * (Motions.cs:82,97,113); the motion_appearances loop above them has none, so a folder called
+ * MOTIONBUFF_Guy there is an ordinary appearance to the game and used to be invisible here.
+ */
+function reserved(name: string, mode: Mode): boolean {
+  return mode === 'override' && RESERVED.some((r) => name.includes(r))
+}
+
+/**
+ * Skill files the plugin will actually read. It walks the MOTION_DETAIL enum and looks for
+ * "<name>.json" (Motions.cs:189-195), so a CharacterVFX.json - which it loads separately - or any
+ * other stray JSON is not a skill file. Showing those as skill tabs meant a perfectly valid
+ * CharacterVFX.json appeared under a red "could not be read" banner.
+ */
+function isSkillFile(name: string): boolean {
+  return MOTION_NAMES.some((motion) => `${motion}.json` === name)
+}
+
+/**
+ * Whether a folder picked on its own is plausibly a character rather than a mod root or some
+ * unrelated directory. A character does not need motions/: RegisterCharacterFolder loads bundles
+ * and CharacterVFX JSON from the same folder (Motions.cs:158), so a bundle-driven character is a
+ * folder of .bundle and skill .json files and nothing else - and it is still worth opening, both
+ * to read its S1.json hitCheckers and to add sprite motions to it.
+ */
+async function looksLikeCharacter(dir: FileSystemDirectoryHandle): Promise<boolean> {
+  for await (const entry of dir.values()) {
+    if (entry.kind === 'directory' && entry.name === 'motions') return true
+    if (entry.kind === 'file' && /\.(bundle|json)$/i.test(entry.name)) return true
+  }
+  return false
+}
+
+/**
+ * The kind of a folder picked on its own, where there is no path to read it off. appearance.json
+ * is only ever read under motion_appearances (AppearanceRegistry.ReadBase, called at
+ * Motions.cs:68), so a folder that has one is an appearance. Nothing distinguishes the other
+ * direction - an override folder and an appearance folder that has not been given a donor yet look
+ * identical - so that returns null rather than guessing, and someone is asked.
+ */
+async function modeOfPickedFolder(dir: FileSystemDirectoryHandle): Promise<Mode | null> {
+  for await (const entry of dir.values()) {
+    if (entry.kind === 'file' && entry.name === 'appearance.json') return 'appearance'
+  }
+  return null
+}
+
+/**
+ * Finds the character folders under whatever the author picked. The mod folder is what they have
+ * open in their file manager, so it is what they pick - one or two levels above the character
+ * folder. Requiring the leaf made a correct mod folder open as an empty editor with nothing on
+ * screen to say why.
+ *
+ * Below one of the two roots, EVERY folder is a character bar the reserved names - the same rule
+ * the plugin applies, and deliberately not "has a motions/ folder". A bundle character has no
+ * sprite motions yet; refusing to open it is refusing the folder you would add the first one to.
+ *
+ * A character found this way takes its mode from the root it was found under. The path already
+ * says which kind it is, and asking the author to classify a folder the plugin classifies by
+ * position is asking them to do arithmetic the program can do.
+ */
+export async function findCharacters(root: FileSystemDirectoryHandle): Promise<Candidate[]> {
+  const found: Candidate[] = []
+
+  async function scan(parent: FileSystemDirectoryHandle, mode: Mode, prefix: string): Promise<void> {
+    for await (const entry of parent.values()) {
+      if (entry.kind !== 'directory' || reserved(entry.name, mode)) continue
+      found.push({ handle: entry as FileSystemDirectoryHandle, mode, path: prefix + entry.name })
+    }
+  }
+
+  const own = ROOTS.get(root.name)
+  if (own) {
+    await scan(root, own, '')
+  } else {
+    for await (const entry of root.values()) {
+      if (entry.kind !== 'directory') continue
+      const mode = ROOTS.get(entry.name)
+      if (mode) await scan(entry as FileSystemDirectoryHandle, mode, `${entry.name}/`)
+    }
+  }
+
+  // Neither root is here, so this is either the character folder itself or a folder that holds no
+  // character at all. The mods folder is excluded explicitly: a stray .json loose in it would
+  // otherwise satisfy looksLikeCharacter and let it open as a character it cannot be.
+  if (found.length === 0 && await looksLikeCharacter(root) && !(await isModsRoot(root))) {
+    return [{ handle: root, mode: await modeOfPickedFolder(root), path: root.name }]
+  }
+
+  found.sort((a, b) => compareNatural(a.path, b.path))
+  return found
+}
+
 /**
  * Lethe truncates any appearance ID containing "Appearance" at that substring
  * (Lethe/Patches/Skin.cs:243), so a folder called MyAppearance_v2 silently registers as
@@ -50,10 +192,86 @@ export function pickFolder(): Promise<FileSystemDirectoryHandle> {
 export function nameRejection(name: string, mode: Mode): string | null {
   if (mode !== 'appearance') return null
   if (name.includes('Appearance')) {
-    return `"${name}" contains "Appearance", which Lethe truncates the ID at — ` +
-           `this would register as "!motions_${name.slice(0, name.indexOf('Appearance') + 'Appearance'.length)}". Rename the folder.`
+    return `"${name}" contains "Appearance", which Lethe truncates the ID at. ` +
+           `It would register as "!motions_${name.slice(0, name.indexOf('Appearance') + 'Appearance'.length)}". Rename the folder.`
   }
   return null
+}
+
+/**
+ * Whether this is the mods folder itself rather than one mod: the folder the plugin enumerates
+ * (Motions.cs:37), where every child is a separate mod. Told apart by evidence rather than by the
+ * name "mods": a folder whose GRANDchildren are motion_appearances/custom_motions is one level too
+ * high, whatever it is called.
+ *
+ * It matters because the two look similar and behave nothing alike. A character created directly
+ * in here would land at mods/motion_appearances/<Name>/, which the plugin reads as a mod called
+ * "motion_appearances" with no character in it, a folder that loads nothing, with no error.
+ */
+export async function isModsRoot(dir: FileSystemDirectoryHandle): Promise<boolean> {
+  for await (const entry of dir.values()) {
+    if (entry.kind !== 'directory') continue
+    for await (const child of (entry as FileSystemDirectoryHandle).values()) {
+      if (child.kind === 'directory' && ROOTS.has(child.name)) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Why a name cannot be a mod folder. Adds the plugin's own skip rule to the filesystem's: a mod
+ * prefixed DISABLED_ or FULLDISABLED_ is skipped outright (Motions.cs:40), so a mod created under
+ * that name would be complete, correct and silently never loaded.
+ */
+export function modFolderRejection(name: string): string | null {
+  const basic = folderNameRejection(name)
+  if (basic) return basic
+  const prefix = ['DISABLED_', 'FULLDISABLED_'].find((p) => name.startsWith(p))
+  if (prefix) return `The plugin skips any mod starting with ${prefix}: it would never load.`
+  return null
+}
+
+/**
+ * Why a name cannot be a folder, before anything is created with it. getDirectoryHandle would
+ * reject most of these on its own, but with a DOMException that says nothing about which
+ * character of the name was the problem - and a name ending in a space or a dot is worse than
+ * that, because Windows accepts it and then makes the folder awkward to open or delete again.
+ */
+export function folderNameRejection(name: string): string | null {
+  if (name.trim() === '') return 'Needs a name.'
+  if (name !== name.trim()) return 'No leading or trailing spaces.'
+  const bad = name.match(/[\\/:*?"<>|]/)
+  if (bad) return `A folder name cannot contain ${bad[0]}`
+  if (name.endsWith('.')) return 'A folder name cannot end in a dot.'
+  return null
+}
+
+/**
+ * Creates an empty character inside a mod folder: the root the plugin looks under, the character
+ * folder itself, and the motions/ folder that makes it recognisable as one. Nothing here needs to
+ * exist beforehand, so this works on a folder made in the file picker a moment ago.
+ *
+ * appearance.json is written for a new appearance because the value it holds is the donor the
+ * plugin would have fallen back to anyway (AppearanceRegistry.DefaultBase) - so it changes nothing
+ * in game, and makes the folder say what kind it is when it is opened on its own later. An
+ * existing one is never overwritten: it is the author's choice of donor, not ours.
+ */
+export async function createCharacter(
+  mod: FileSystemDirectoryHandle,
+  name: string,
+  mode: Mode,
+): Promise<Candidate & { mode: Mode }> {
+  const rootName = mode === 'appearance' ? 'motion_appearances' : 'custom_motions'
+  const root = await mod.getDirectoryHandle(rootName, { create: true })
+  const handle = await root.getDirectoryHandle(name, { create: true })
+  await handle.getDirectoryHandle('motions', { create: true })
+
+  if (mode === 'appearance') {
+    const already = await handle.getFileHandle('appearance.json').then(() => true, () => false)
+    if (!already) await writeFile(handle, 'appearance.json', JSON.stringify({ base: DEFAULT_BASE }, null, 2))
+  }
+
+  return { handle, mode, path: `${rootName}/${name}` }
 }
 
 async function readText(dir: FileSystemDirectoryHandle, name: string): Promise<string | null> {
@@ -134,7 +352,9 @@ export function checkSkillJson(text: string | null, name: string): string | null
   if (text === null) return null
   let data: any
   try {
-    data = JSON.parse(text)
+    // Comments and trailing commas are fine here: the plugin allows both
+    // (TimelineBuilder.cs:37-42), so a file holding them is not the author's problem.
+    data = JSON.parse(stripJsoncExtras(text))
   } catch {
     return `${name} is not valid JSON, so the game will ignore it.`
   }
@@ -142,7 +362,9 @@ export function checkSkillJson(text: string | null, name: string): string | null
   const badIndex = coins.findIndex((c) => !Array.isArray(c?.hitCheckers) || c.hitCheckers.length === 0)
 
   if (badIndex !== -1) {
-    return `${name} coin ${badIndex} has no hitCheckers. That defaults to 15% of the coin, ` +
+    // 1-based, like the coin tabs and every parse error. Reporting the raw index sent people to
+    // the wrong tab.
+    return `${name} coin ${badIndex + 1} has no hitCheckers. That defaults to 15% of the coin, ` +
            `which cuts the animation off early. Add "hitCheckers": [{ "time": 1.0, "isNextMotionCoinDelay": 0.0 }] ` +
            `- unlike animation.json, time here is a fraction of totalDuration, so 1.0 means the end.`
   }
@@ -154,11 +376,16 @@ export async function loadCharacter(
   mode: Mode,
 ): Promise<LoadedCharacter> {
   const motions: LoadedMotion[] = []
+  const skills: LoadedSkill[] = []
   let s1Warning: string | null = null
 
   for await (const entry of handle.values()) {
-    if (entry.kind === 'file' && /\.json$/i.test(entry.name) && entry.name !== 'appearance.json') {
-      s1Warning ??= checkSkillJson(await readText(handle, entry.name), entry.name)
+    if (entry.kind === 'file' && isSkillFile(entry.name)) {
+      const text = (await readText(handle, entry.name)) ?? ''
+      const warning = checkSkillJson(text, entry.name)
+      s1Warning ??= warning
+      const { skill, error } = parseSkill(text)
+      skills.push({ name: entry.name, skill, error, text, warning })
     }
     if (entry.kind !== 'directory' || entry.name !== 'motions') continue
 
@@ -169,15 +396,25 @@ export async function loadCharacter(
     }
   }
   motions.sort((a, b) => compareNatural(a.folder, b.folder))
+  // Natural order so S10.json follows S9.json, the same as the motion tabs.
+  skills.sort((a, b) => compareNatural(a.name, b.name))
 
   const appearanceText = await readText(handle, 'appearance.json')
   let appearanceBase = DEFAULT_BASE
+  // No file at all is readable in the sense that matters here: there is nothing of the author's
+  // to lose, and Save creating one is not a silent overwrite.
+  let appearanceReadable = true
   if (appearanceText !== null) {
     try {
-      const parsed = JSON.parse(appearanceText)
+      // The plugin reads this with AllowTrailingCommas and comments skipped
+      // (AppearanceRegistry.cs:33-38), so a file with a comment in it works in game. Parsing it
+      // strictly here made the editor fall back to the default donor and then, because
+      // appearance.json was written on every save, put that default on disk over the author's
+      // real donor. Same tolerance as the plugin, and a failure now blocks the write outright.
+      const parsed = JSON.parse(stripJsoncExtras(appearanceText))
       if (typeof parsed?.base === 'string' && parsed.base) appearanceBase = parsed.base
     } catch {
-      // A malformed appearance.json means the plugin falls back to Yi Sang; so do we.
+      appearanceReadable = false
     }
   }
 
@@ -186,8 +423,10 @@ export async function loadCharacter(
     name: handle.name,
     mode,
     motions,
+    skills,
     appearanceBase,
     hadAppearanceJson: appearanceText !== null,
+    appearanceReadable,
     s1Warning,
   }
 }

@@ -119,7 +119,7 @@ const num = (v: unknown, fallback = 0): number => {
  * JSON.parse accepts neither, so we strip them first - walking the string ourselves rather than
  * regexing, because a regex cannot tell a "//" inside a sprite path from a line comment.
  */
-function stripJsoncExtras(json: string): string {
+export function stripJsoncExtras(json: string): string {
   let out = ''
   let inString = false
   let i = 0

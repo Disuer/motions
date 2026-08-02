@@ -1,7 +1,7 @@
 # Buff VFX
 
 Motions can also attach a looping VFX prefab to a unit while it has one of
-Lethe's custom buffs — the kind of aura that sits behind a character while a
+Lethe's custom buffs, the kind of aura that sits behind a character while a
 status is active.
 
 Name the folder after the buff, prefixed with `MOTIONBUFF_`:

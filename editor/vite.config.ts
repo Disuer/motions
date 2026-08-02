@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -7,4 +8,6 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   base: '/motions/editor/',
   plugins: [react(), tailwindcss()],
+  // Matches the "@/*" paths entry in tsconfig.json - tsc resolves those, the bundler does not.
+  resolve: { alias: { '@': path.resolve(import.meta.dirname, 'src') } },
 })

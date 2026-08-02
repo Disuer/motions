@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_BASE, checkSkillJson, importAssets, loadCharacter, nameRejection } from './fs'
+import {
+  DEFAULT_BASE, checkSkillJson, createCharacter, findCharacters, folderNameRejection, importAssets,
+  isModsRoot, loadCharacter, modFolderRejection, nameRejection,
+} from './fs'
 import { defaultSpec } from './spec'
 
 // vitest's environment has no createObjectURL; loadAsset needs it to exist. It only has to
@@ -54,7 +57,8 @@ describe('checkSkillJson', () => {
     const json = JSON.stringify({
       coins: [{ hitCheckers: [{ time: 1.0, isNextMotionCoinDelay: 0 }] }, { hitCheckers: [] }],
     })
-    expect(checkSkillJson(json, 'S1.json')).toMatch(/coin 1 has no hitCheckers/)
+    // 1-based, matching the coin tabs in the editor: the raw index sent people to the wrong tab.
+    expect(checkSkillJson(json, 'S1.json')).toMatch(/coin 2 has no hitCheckers/)
   })
 
   it('flags malformed JSON without touching the file', () => {
@@ -256,5 +260,317 @@ describe('importAssets', () => {
     ])
     expect(result.written.sort()).toEqual(['a.png', 'b.png'])
     expect(result.replaced).toEqual([])
+  })
+})
+
+// The mod folder is what an author has open, and it is two levels above motions/. Every case
+// below was an empty editor with nothing on screen explaining why.
+describe('findCharacters', () => {
+  const character = { motions: dir({ Idle: dir({ 'idle_1.png': file() }) }) }
+
+  it('descends into the mod folder an author actually picks', async () => {
+    const mod = fakeDir('MotionsGuy', {
+      custom_limbus_data: dir({ personality: dir({ 'guy.json': file('{}') }) }),
+      motion_appearances: dir({ MyGuy: dir(character) }),
+    })
+    const found = await findCharacters(mod)
+
+    expect(found).toHaveLength(1)
+    expect(found[0].path).toBe('motion_appearances/MyGuy')
+    // Read off the path, which is the whole point: nobody is asked which kind this is.
+    expect(found[0].mode).toBe('appearance')
+  })
+
+  // A folder picked on its own has no path to read the kind off. appearance.json settles it;
+  // nothing else does, and a null here is what puts the question to the author.
+  it('takes a character folder as itself, and only claims a kind it can prove', async () => {
+    const bare = await findCharacters(fakeDir('MyGuy', character))
+    expect(bare).toEqual([expect.objectContaining({ path: 'MyGuy', mode: null })])
+
+    const withDonor = await findCharacters(
+      fakeDir('MyGuy', { ...character, 'appearance.json': file('{"base":"x"}') }),
+    )
+    expect(withDonor[0].mode).toBe('appearance')
+  })
+
+  it('accepts motion_appearances/ itself, the other level people land on', async () => {
+    const found = await findCharacters(fakeDir('motion_appearances', { MyGuy: dir(character) }))
+    expect(found).toEqual([expect.objectContaining({ path: 'MyGuy', mode: 'appearance' })])
+  })
+
+  it('finds both roots and skips the reserved bundle folders by name', async () => {
+    const mod = fakeDir('BigMod', {
+      motion_appearances: dir({ Zed: dir(character), Ada: dir(character) }),
+      custom_motions: dir({
+        '10101_YiSang': dir(character),
+        DASHBOARD: dir({ 'ui.bundle': file() }),
+        CUSTOMSCREEN_2: dir({ 'border.bundle': file() }),
+        MOTIONBUFF_Sinking: dir({ 'fx.bundle': file() }),
+      }),
+    })
+    const found = await findCharacters(mod)
+
+    expect(found.map((c) => c.path)).toEqual([
+      'custom_motions/10101_YiSang',
+      'motion_appearances/Ada',
+      'motion_appearances/Zed',
+    ])
+    expect(found.map((c) => c.mode)).toEqual(['override', 'appearance', 'appearance'])
+  })
+
+  // A bundle character has no motions/ at all - the plugin registers it from the same folder
+  // (Motions.cs:158) and loads its .bundle. Refusing it was refusing the folder an author would
+  // add their first sprite motion to, and the S1.json the editor reads hitCheckers out of.
+  it('opens a bundle character, which has no motions/ folder to find', async () => {
+    const bundleChar = { 'motion.bundle': file(), 'S1.json': file('{}') }
+    const mod = fakeDir('RCorp_Myo', {
+      custom_appearance: dir({ 'myocom.bundle': file() }),
+      custom_motions: dir({ '!custom_10703_Heathclif_RCorpAppearance': dir(bundleChar) }),
+    })
+
+    const fromMod = await findCharacters(mod)
+    expect(fromMod.map((c) => c.path)).toEqual(['custom_motions/!custom_10703_Heathclif_RCorpAppearance'])
+    // override, so nameRejection does not fire on the "Appearance" in that folder name - the
+    // truncation it guards against only applies to motion_appearances/.
+    expect(fromMod[0].mode).toBe('override')
+
+    // And picked directly, which is the other way an author reaches it - kind unproven there.
+    const direct = await findCharacters(fakeDir('!custom_10703_Heathclif', bundleChar))
+    expect(direct).toEqual([expect.objectContaining({ path: '!custom_10703_Heathclif', mode: null })])
+  })
+
+  it('finds nothing in a folder that holds no character at all', async () => {
+    expect(await findCharacters(fakeDir('Mods', { SomeOtherMod: dir({}) }))).toEqual([])
+  })
+})
+
+// Both rejections run before a folder exists, because the alternative is deleting a folder that
+// was created under a name the game will not match.
+describe('folderNameRejection', () => {
+  it('accepts the names people actually use', () => {
+    expect(folderNameRejection('MyGuy')).toBeNull()
+    expect(folderNameRejection('10101_YiSang')).toBeNull()
+    expect(folderNameRejection('!custom_10703_Heathclif_RCorp')).toBeNull()
+  })
+
+  it('refuses an empty name and one that is only spaces', () => {
+    expect(folderNameRejection('')).toMatch(/Needs a name/)
+    expect(folderNameRejection('   ')).toMatch(/Needs a name/)
+  })
+
+  it('refuses a path separator rather than letting it create a nested folder', () => {
+    expect(folderNameRejection('a/b')).toBe('A folder name cannot contain /')
+    expect(folderNameRejection('a\\b')).toBe('A folder name cannot contain \\')
+    expect(folderNameRejection('a:b')).toBe('A folder name cannot contain :')
+  })
+
+  // Windows takes these and then makes the folder awkward to open or delete again, so they are
+  // refused here rather than left to getDirectoryHandle, which accepts them.
+  it('refuses trailing spaces and dots, which Windows accepts and then regrets', () => {
+    expect(folderNameRejection('MyGuy ')).toMatch(/trailing spaces/)
+    expect(folderNameRejection('MyGuy.')).toMatch(/end in a dot/)
+  })
+})
+
+/** A directory fake that can create: records every folder and file made under it, by full path. */
+function fakeCreatableDir(name: string, existing: string[] = []) {
+  const made: string[] = []
+  const files = new Map<string, string>()
+
+  function dirAt(path: string): FileSystemDirectoryHandle {
+    return {
+      name: path.split('/').pop() ?? path,
+      kind: 'directory',
+      async getDirectoryHandle(child: string, opts?: { create?: boolean }) {
+        const full = path ? `${path}/${child}` : child
+        if (!opts?.create && !made.includes(full)) throw new DOMException(full, 'NotFoundError')
+        if (!made.includes(full)) made.push(full)
+        return dirAt(full)
+      },
+      async getFileHandle(file: string, opts?: { create?: boolean }) {
+        const full = path ? `${path}/${file}` : file
+        if (!opts?.create && !existing.includes(full)) throw new DOMException(full, 'NotFoundError')
+        return {
+          async createWritable() {
+            return {
+              async write(contents: string) { files.set(full, String(contents)) },
+              async close() {},
+            }
+          },
+        }
+      },
+    } as unknown as FileSystemDirectoryHandle
+  }
+
+  return { handle: dirAt(name), made, files }
+}
+
+describe('createCharacter', () => {
+  it('builds the whole path the plugin looks for, in one go', async () => {
+    const mod = fakeCreatableDir('MyMod')
+    const made = await createCharacter(mod.handle, 'MyGuy', 'appearance')
+
+    expect(mod.made).toEqual([
+      'MyMod/motion_appearances',
+      'MyMod/motion_appearances/MyGuy',
+      'MyMod/motion_appearances/MyGuy/motions',
+    ])
+    expect(made.path).toBe('motion_appearances/MyGuy')
+    expect(made.mode).toBe('appearance')
+  })
+
+  it('puts an override under custom_motions, with no appearance.json', async () => {
+    const mod = fakeCreatableDir('MyMod')
+    const made = await createCharacter(mod.handle, '10101_YiSang', 'override')
+
+    expect(mod.made[0]).toBe('MyMod/custom_motions')
+    expect(made.path).toBe('custom_motions/10101_YiSang')
+    expect([...mod.files.keys()]).toEqual([])
+  })
+
+  it('writes the donor the plugin would have defaulted to anyway', async () => {
+    const mod = fakeCreatableDir('MyMod')
+    await createCharacter(mod.handle, 'MyGuy', 'appearance')
+    const written = mod.files.get('MyMod/motion_appearances/MyGuy/appearance.json')
+    expect(JSON.parse(written!)).toEqual({ base: DEFAULT_BASE })
+  })
+
+  // Creating over an existing character is how an author re-opens one they made earlier; the donor
+  // they chose is theirs, and re-running this must not put the default back.
+  it('leaves an existing appearance.json alone', async () => {
+    const mod = fakeCreatableDir('MyMod', ['MyMod/motion_appearances/MyGuy/appearance.json'])
+    await createCharacter(mod.handle, 'MyGuy', 'appearance')
+    expect(mod.files.size).toBe(0)
+  })
+})
+
+// mods/ and a mod folder look alike and behave nothing alike. Creating a character in the wrong
+// one produces mods/motion_appearances/<Name>/ - which the plugin loads as a mod called
+// "motion_appearances", finds nothing in, and reports nothing about.
+describe('isModsRoot', () => {
+  const character = { motions: dir({ Idle: dir({ 'idle_1.png': file() }) }) }
+  const mod = { motion_appearances: dir({ MyGuy: dir(character) }) }
+
+  it('recognises the folder whose children are mods', async () => {
+    expect(await isModsRoot(fakeDir('mods', { MotionsGuy: dir(mod) }))).toBe(true)
+  })
+
+  // By evidence, not by the name: a mods folder is not always called mods, and a mod folder
+  // called "mods" is still one level below.
+  it('does not go by the name', async () => {
+    expect(await isModsRoot(fakeDir('plugins', { SomeMod: dir(mod) }))).toBe(true)
+    expect(await isModsRoot(fakeDir('mods', mod))).toBe(false)
+  })
+
+  it('is false for a mod folder, a character folder and an empty one', async () => {
+    expect(await isModsRoot(fakeDir('MotionsGuy', mod))).toBe(false)
+    expect(await isModsRoot(fakeDir('MyGuy', character))).toBe(false)
+    expect(await isModsRoot(fakeDir('New folder', {}))).toBe(false)
+  })
+
+  it('sees a mods folder holding an override-only mod too', async () => {
+    const overrideMod = { custom_motions: dir({ '10101_YiSang': dir(character) }) }
+    expect(await isModsRoot(fakeDir('mods', { OtherMod: dir(overrideMod) }))).toBe(true)
+  })
+})
+
+describe('modFolderRejection', () => {
+  it('refuses the prefixes the plugin skips, which would load nothing and say nothing', () => {
+    expect(modFolderRejection('DISABLED_MyMod')).toMatch(/never load/)
+    expect(modFolderRejection('FULLDISABLED_MyMod')).toMatch(/never load/)
+  })
+
+  it('still applies the plain folder rules', () => {
+    expect(modFolderRejection('')).toMatch(/Needs a name/)
+    expect(modFolderRejection('MyMod')).toBeNull()
+  })
+})
+
+// The mods folder must never come back as a character, even when something loose in it makes it
+// look like one - opening it there is the exact mistake the refusal exists to prevent.
+describe('findCharacters at the mods folder', () => {
+  const mod = { motion_appearances: dir({ MyGuy: dir({ motions: dir({}) }) }) }
+
+  it('finds nothing in it, so the refusal is what an author gets', async () => {
+    expect(await findCharacters(fakeDir('mods', { MotionsGuy: dir(mod) }))).toEqual([])
+  })
+
+  it('still finds nothing when a stray file makes it look like a character folder', async () => {
+    const mods = fakeDir('mods', { MotionsGuy: dir(mod), 'manifest.json': file('{}') })
+    expect(await findCharacters(mods)).toEqual([])
+  })
+})
+
+// The plugin reads appearance.json with AllowTrailingCommas and comments skipped
+// (AppearanceRegistry.cs:33-38). Parsing it strictly here meant a file that works in game fell
+// back to the default donor on screen, and then, because appearance.json was written on every
+// save, put that default on disk over the author's real one.
+describe('loadCharacter and appearance.json', () => {
+  const withAppearance = (content: string) =>
+    fakeDir('MyGuy', { motions: dir({}), 'appearance.json': file(content) })
+
+  it('reads a donor out of a file with comments and a trailing comma', async () => {
+    const c = await loadCharacter(
+      withAppearance('{\n  // my donor\n  "base": "10403_Ishmael_BaseAppearance",\n}'),
+      'appearance',
+    )
+    expect(c.appearanceBase).toBe('10403_Ishmael_BaseAppearance')
+    expect(c.appearanceReadable).toBe(true)
+  })
+
+  it('marks a genuinely unreadable one, so the donor on screen is never written back', async () => {
+    const c = await loadCharacter(withAppearance('{ this is not json at all'), 'appearance')
+    expect(c.appearanceBase).toBe(DEFAULT_BASE)
+    expect(c.appearanceReadable).toBe(false)
+  })
+
+  it('counts a character with no appearance.json as readable, having nothing to lose', async () => {
+    const c = await loadCharacter(fakeDir('MyGuy', { motions: dir({}) }), 'appearance')
+    expect(c.hadAppearanceJson).toBe(false)
+    expect(c.appearanceReadable).toBe(true)
+  })
+})
+
+describe('checkSkillJson and JSONC', () => {
+  it('does not call a file the game reads perfectly well invalid', () => {
+    const json = '{\n  // the opener\n  "coins": [{ "hitCheckers": [{ "time": 1.0 }] }],\n}'
+    expect(checkSkillJson(json, 'S1.json')).toBeNull()
+  })
+})
+
+// The plugin walks the MOTION_DETAIL enum and looks for "<name>.json" (Motions.cs:189-195).
+// Treating every root .json as a skill file put a valid CharacterVFX.json behind a red
+// "could not be read" banner, and gave stray files a tab for something the game never opens.
+describe('which JSON files count as skill files', () => {
+  it('takes the motion-named ones and leaves everything else alone', async () => {
+    const root = fakeDir('MyGuy', {
+      motions: dir({}),
+      'S1.json': file('{"coins":[]}'),
+      'Idle.json': file('{"coins":[]}'),
+      'CharacterVFX.json': file('{"anything":1}'),
+      'notes.json': file('not even json'),
+      'S1_1.json': file('{"coins":[]}'),
+      'appearance.json': file('{"base":"x"}'),
+    })
+    const character = await loadCharacter(root, 'appearance')
+    expect(character.skills.map((s) => s.name).sort()).toEqual(['Idle.json', 'S1.json'])
+  })
+})
+
+describe('reserved folder names', () => {
+  const character = { motions: dir({ Idle: dir({}) }) }
+
+  // The plugin only skips these inside custom_motions (Motions.cs:82,97,113). Applying the rule
+  // to motion_appearances too made a legitimately named appearance impossible to open.
+  it('skips them under custom_motions and not under motion_appearances', async () => {
+    const mod = fakeDir('Mod', {
+      custom_motions: dir({ DASHBOARD: dir(character), '10101_YiSang': dir(character) }),
+      motion_appearances: dir({ MOTIONBUFF_Guy: dir(character) }),
+    })
+    const found = await findCharacters(mod)
+    expect(found.map((c) => c.path).sort()).toEqual([
+      'custom_motions/10101_YiSang',
+      'motion_appearances/MOTIONBUFF_Guy',
+    ])
   })
 })

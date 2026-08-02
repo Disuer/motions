@@ -21,7 +21,7 @@ two timelines (`s2` and `s2_1`) and two entries in the `coins` array of
 
 ## Audio
 
-Unity's `AudioTrack` and FMOD tracks are stripped out of your timeline — they
+Unity's `AudioTrack` and FMOD tracks are stripped out of your timeline; they
 don't survive IL2CPP. Motions instead reads each clip's **display name**, looks
 for a `TextAsset` in your bundle called `<clipname>.bytes`, and plays those bytes
 back through FMOD Core at the clip's start time.
@@ -31,7 +31,7 @@ back through FMOD Core at the clip's start time.
   trimming in the Unity timeline works as you'd expect.
 
 The base project's editor script generates the `.bytes` assets for you at build
-time — see [SFX](SFX.md).
+time. See [SFX](SFX.md).
 
 ## VFX
 

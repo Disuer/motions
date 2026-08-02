@@ -1,6 +1,40 @@
-import type { PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { AnimationSpec, Frame, effectivePpu } from './spec'
 import { LoadedAsset } from './fs'
+
+/** The zoom range, shared by the wheel and the slider so the two cannot disagree. */
+export const ZOOM_MIN = 0.25
+export const ZOOM_MAX = 4
+
+export function clampZoom(z: number): number {
+  return Number.isFinite(z) ? Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)) : 1
+}
+
+/**
+ * How fast the wheel zooms. Applied as an exponent rather than a multiplier so a notch changes
+ * the view by the same proportion at every zoom level, instead of crawling when zoomed out and
+ * jumping when zoomed in.
+ */
+const WHEEL_SENSITIVITY = 0.0015
+
+/**
+ * Keeps the point under the pointer where it is while the zoom changes, by moving the pan the
+ * complement of the zoom. Without it the view zooms towards the centre and whatever you were
+ * looking at slides off, which means a pan after every zoom.
+ *
+ * `u` is the cursor's offset from the origin in screen pixels; scaling by the zoom ratio and
+ * taking the difference is what holds it still.
+ */
+export function zoomAbout(
+  pan: { x: number; y: number },
+  cursor: { x: number; y: number },
+  ratio: number,
+): { x: number; y: number } {
+  return {
+    x: pan.x + (cursor.x - pan.x) * (1 - ratio),
+    y: pan.y + (cursor.y - pan.y) * (1 - ratio),
+  }
+}
 
 /** Where a frame sits, in world units. Bottom-centre anchored, exactly like the runtime pivot. */
 export function frameRect(asset: LoadedAsset, frame: Frame, ppu: number) {
@@ -27,15 +61,52 @@ interface Props {
   /** Viewport pan, in screen pixels. */
   pan: { x: number; y: number }
   onPan: (p: { x: number; y: number }) => void
+  onZoom: (z: number) => void
   /** World-unit delta from dragging the current frame with the left button. */
   onDragFrame: (dx: number, dy: number) => void
 }
 
 export default function Canvas({
-  spec, assets, index, onionSkin, zoom, pan, onPan, onDragFrame,
+  spec, assets, index, onionSkin, zoom, pan, onPan, onZoom, onDragFrame,
 }: Props) {
   const z = BASE_Z * zoom
   const point = spec.filter === 'point'
+  const box = useRef<HTMLDivElement>(null)
+
+  // The wheel handler is bound once and reads through a ref, rather than being rebound whenever
+  // the pan changes: dragging a frame re-renders on every pointermove, and rebinding a listener
+  // at that rate to capture fresh props is a lot of churn for values a ref holds for free.
+  const latest = useRef({ zoom, pan, onPan, onZoom })
+  latest.current = { zoom, pan, onPan, onZoom }
+
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+
+    function onWheel(e: WheelEvent) {
+      // Bound with passive: false because of this. React attaches its own wheel listeners
+      // passively, so an onWheel prop cannot stop the page scrolling behind the canvas.
+      e.preventDefault()
+      const { zoom: current, pan: at, onPan: pan_, onZoom: zoom_ } = latest.current
+      const rect = el!.getBoundingClientRect()
+
+      // deltaMode 1 is lines and 2 is pages; normalised so a mouse wheel and a trackpad agree.
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? rect.height : 1
+      const next = clampZoom(current * Math.exp(-e.deltaY * unit * WHEEL_SENSITIVITY))
+      if (next === current) return
+
+      // Cursor relative to the canvas centre, which is where the origin sits at pan 0,0.
+      const cursor = {
+        x: e.clientX - rect.left - rect.width / 2,
+        y: e.clientY - rect.top - rect.height / 2,
+      }
+      pan_(zoomAbout(at, cursor, next / current))
+      zoom_(next)
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
 
   // The origin is the character's feet: horizontally centred, sitting on the ground line.
   const originX = pan.x
@@ -106,9 +177,11 @@ export default function Canvas({
 
   return (
     <div
+      ref={box}
       className="relative h-full w-full cursor-move overflow-hidden bg-neutral-100"
       onPointerDown={onPointerDown}
       onContextMenu={(e) => e.preventDefault()}
+      title="Scroll to zoom. Left drag moves the frame, middle or right drag pans."
     >
       {/* 0.5u grid */}
       <div

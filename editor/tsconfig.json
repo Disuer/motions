@@ -8,7 +8,10 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    // No baseUrl: TS 7 removed it. Paths without it resolve relative to this file, which is what
+    // the "@/src" alias in vite.config.ts already assumes.
+    "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src"]
 }

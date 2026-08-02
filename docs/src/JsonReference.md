@@ -13,7 +13,7 @@ Add the schema line for autocompletion in VSCode:
 ## Time is a fraction, not seconds
 
 Inside a coin, `totalDuration` is the only value in seconds. **Every other time
-is a fraction of it**, between `0.0` and `1.0` — `start`, `end`, `hitCheckers.time`,
+is a fraction of it**, between `0.0` and `1.0`: `start`, `end`, `hitCheckers.time`,
 and the `start` of zooms, rotates and shakes are all multiplied by `totalDuration`.
 
 So in a coin with `"totalDuration": 2.0`, a phase at `"start": 0.5` fires one
@@ -33,7 +33,7 @@ One object per coin, in order. A coin's object is:
 | Field | Type | Meaning |
 |---|---|---|
 | `totalDuration` | number | Length of the coin, in seconds. |
-| `phases` | array | Movement and damage — see below. |
+| `phases` | array | Movement and damage. See below. |
 | `hitCheckers` | array | When the coin ends. |
 | `zooms` | array | Camera zooms. |
 | `rotates` | array | Camera rotations. |
@@ -74,7 +74,7 @@ Moves the character to the target, stopping short by `move`.
 
 | Field | Type | Default |
 |---|---|---|
-| `move` | `{x, y, z}` | `0,0,0` — arrival offset from the target |
+| `move` | `{x, y, z}` | `0,0,0`, arrival offset from the target |
 
 ### MoveEnemy
 
@@ -83,7 +83,7 @@ Moves the **target** rather than the attacker, by `move`. Same fields as
 
 ### GiveDamage
 
-Applies the visual hit — damage numbers, knockback, hit reaction.
+Applies the visual hit: damage numbers, knockback, hit reaction.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -124,8 +124,8 @@ If you leave `hitCheckers` out, Motions inserts one at `0.15` of the coin.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `start` | fraction | — | When the zoom begins. |
-| `duration` | seconds | — | How long the zoom clip lasts. |
+| `start` | fraction | none | When the zoom begins. |
+| `duration` | seconds | none | How long the zoom clip lasts. |
 | `attacker` | bool | `true` | Include the attacker in the framing. |
 | `targets` | bool | `true` | Include the targets in the framing. |
 | `between` | float | `0` | Bias the focus point between attacker and targets. |
@@ -158,8 +158,8 @@ If you leave `hitCheckers` out, Motions inserts one at `0.15` of the coin.
 
 | Field | Type | Default |
 |---|---|---|
-| `start` | fraction | — |
-| `duration` | seconds | — |
+| `start` | fraction | none |
+| `duration` | seconds | none |
 | `strength` | float | `0.25` |
 | `vibrato` | int | `120` |
 | `randomness` | float | `90` |
