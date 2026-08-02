@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Coin, clampFraction } from './skill'
+import Ruler, { gridImage } from './Ruler'
 
 export type TrackKey = 'phases' | 'hitCheckers' | 'zooms' | 'rotates' | 'shakes'
 
@@ -19,6 +20,10 @@ export const TRACKS: { key: TrackKey; label: string; hint: string }[] = [
 ]
 
 const pct = (v: number) => `${clampFraction(v) * 100}%`
+
+/** The axis is always 0..1 here, so the ruler is fixed at tenths - no fitting to a duration. */
+const TICKS = Array.from({ length: 11 }, (_, i) => i / 10)
+const GRID = gridImage('10%')
 
 /** Where a marker sits, as a fraction. hitCheckers use `time`; everything else uses `start`. */
 export function positionOf(coin: Coin, m: Marker): number {
@@ -94,6 +99,12 @@ export default function SkillTimeline({ coin, selected, onSelect, onMove, onAdd 
       </div>
 
       <div className="flex flex-col gap-1 p-3">
+        {/* Same gutters as a track row: w-16 label + gap-2 on the left, add button + gap on the
+            right, so a tick sits over the fraction it names. */}
+        <div className="pl-18 pr-9">
+          <Ruler ticks={TICKS} at={pct} label={(t) => `${+t.toFixed(1)}`} />
+        </div>
+
         {TRACKS.map((track) => (
           <div key={track.key} className="flex items-center gap-2">
             <span className="w-16 shrink-0 text-right text-[11px] text-muted-foreground"
@@ -104,6 +115,7 @@ export default function SkillTimeline({ coin, selected, onSelect, onMove, onAdd 
             <div
               ref={(el) => { strips.current.set(track.key, el) }}
               className="relative h-7 flex-1 rounded-md border bg-muted"
+              style={{ backgroundImage: GRID }}
               // Clicking empty track space adds there, which is how a marker gets created at a
               // time rather than at 0 and dragged over.
               onDoubleClick={(e) => onAdd(track.key, fractionAt(track.key, e.clientX))}
@@ -141,10 +153,8 @@ export default function SkillTimeline({ coin, selected, onSelect, onMove, onAdd 
           </div>
         ))}
 
-        <div className="mt-1 flex justify-between pl-18 pr-9 text-[10px] text-muted-foreground">
-          <span>0.0</span>
-          <span>drag to move, double-click a track to add</span>
-          <span>1.0</span>
+        <div className="mt-1 pl-18 text-[10px] text-muted-foreground">
+          drag to move, double-click a track to add
         </div>
       </div>
     </div>

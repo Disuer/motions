@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import NumberField from './NumberField'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import Ruler, { gridImage } from './Ruler'
 import { AnimationSpec, DEFAULT_FPS } from './spec'
 
 /**
@@ -14,6 +15,18 @@ import { AnimationSpec, DEFAULT_FPS } from './spec'
  */
 export function pct(t: number, duration: number): string {
   return duration > 0 ? `${(t / duration) * 100}%` : '0%'
+}
+
+const STEPS = [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10]
+
+/**
+ * Spacing between ruler ticks, in seconds: the first round step that fits the whole motion in
+ * about ten of them, so a 0.4s motion is ruled every 0.05s and a 5s one every 0.5s. Longer than
+ * the table can express falls back to a tenth of the duration, rounded up - not round, but a
+ * ruler with ten ticks beats no ruler.
+ */
+export function tickStep(duration: number): number {
+  return STEPS.find((s) => duration / s <= 10) ?? Math.ceil(duration / 10)
 }
 
 interface Props {
@@ -65,6 +78,12 @@ export default function Timeline({
     window.addEventListener('pointerup', up)
   }
 
+  const step = tickStep(spec.duration)
+  const ticks = spec.duration > 0
+    ? Array.from({ length: Math.floor(spec.duration / step + 1e-9) + 1 }, (_, i) => i * step)
+    : []
+  const grid = spec.duration > 0 ? gridImage(pct(step, spec.duration)) : undefined
+
   return (
     <div className="border-t p-3">
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
@@ -93,42 +112,61 @@ export default function Timeline({
         </div>
       </div>
 
-      {/* frames */}
-      <div ref={strip} className="relative h-8 rounded-md border bg-muted">
-        {spec.frames.map((f, i) => (
-          <button
-            key={i}
-            onPointerDown={(e) => { onPick(i); drag(e, (t) => onFrameTime(i, t), () => onFrameDragEnd(i)) }}
-            title={`frame ${i + 1}: ${f.sprite} @ ${f.t.toFixed(3)}s`}
-            className={`absolute top-1 h-6 w-2 -translate-x-1/2 rounded ${
-              i === index ? 'bg-primary' : 'bg-muted-foreground/50 hover:bg-muted-foreground'}`}
-            style={{ left: pct(f.t, spec.duration) }}
-          />
-        ))}
-        {playhead !== null && (
-          <div className="pointer-events-none absolute inset-y-0 w-px bg-red-500"
-               style={{ left: pct(playhead, spec.duration) }} />
-        )}
+      <div className="flex gap-2">
+        {/* Track names, in a gutter beside the strips so nothing overlaps a marker sitting at 0s.
+            The heights here shadow the rows opposite: h-5 ruler, h-8 frames, h-6 sfx. */}
+        <div className="w-10 shrink-0 text-right text-[10px] text-muted-foreground">
+          <div className="h-5" />
+          <div className="flex h-8 items-center justify-end">frames</div>
+          <div className="mt-1 flex h-6 items-center justify-end">sfx</div>
+        </div>
+
+        <div className="relative flex-1">
+          <Ruler ticks={ticks} at={(t) => pct(t, spec.duration)} label={(t) => `${+t.toFixed(2)}s`} />
+
+          {/* frames */}
+          <div ref={strip} className="relative h-8 rounded-md border bg-muted"
+               style={{ backgroundImage: grid }}>
+            {spec.frames.map((f, i) => (
+              <button
+                key={i}
+                onPointerDown={(e) => { onPick(i); drag(e, (t) => onFrameTime(i, t), () => onFrameDragEnd(i)) }}
+                title={`frame ${i + 1}: ${f.sprite} @ ${f.t.toFixed(3)}s`}
+                className={`absolute top-1 h-6 w-2 -translate-x-1/2 rounded ${
+                  i === index ? 'bg-primary' : 'bg-muted-foreground/50 hover:bg-muted-foreground'}`}
+                style={{ left: pct(f.t, spec.duration) }}
+              />
+            ))}
+          </div>
+
+          {/* sfx */}
+          <div className="relative mt-1 h-6 rounded-md border bg-muted/40"
+               style={{ backgroundImage: grid }}>
+            {spec.sfx.map((s, i) => (
+              <button
+                key={i}
+                onPointerDown={(e) => { onPickSfx(i); drag(e, (t) => onSfxTime(i, t)) }}
+                title={`${s.file} @ ${s.t.toFixed(3)}s`}
+                className={`absolute top-1 h-4 w-4 -translate-x-1/2 rounded-full text-[8px] ${
+                  i === sfxIndex ? 'ring-2 ring-primary ring-offset-1 bg-emerald-600' : 'bg-emerald-600/70'}`}
+                style={{ left: pct(s.t, spec.duration) }}
+              />
+            ))}
+          </div>
+
+          {/* One playhead over both tracks, so a sound and the frame it lands on read as the same
+              instant rather than two marks the eye has to line up. */}
+          {playhead !== null && (
+            <div className="pointer-events-none absolute inset-y-0 top-3 w-px bg-red-500"
+                 style={{ left: pct(playhead, spec.duration) }}>
+              <div className="absolute -left-[3px] top-0 size-[7px] rounded-full bg-red-500" />
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* sfx */}
-      <div className="relative mt-1 h-6 rounded-md border bg-muted/40">
-        {spec.sfx.map((s, i) => (
-          <button
-            key={i}
-            onPointerDown={(e) => { onPickSfx(i); drag(e, (t) => onSfxTime(i, t)) }}
-            title={`${s.file} @ ${s.t.toFixed(3)}s`}
-            className={`absolute top-1 h-4 w-4 -translate-x-1/2 rounded-full text-[8px] ${
-              i === sfxIndex ? 'ring-2 ring-primary ring-offset-1 bg-emerald-600' : 'bg-emerald-600/70'}`}
-            style={{ left: pct(s.t, spec.duration) }}
-          />
-        ))}
-      </div>
-
-      <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
-        <span>0s</span>
-        <span>seconds, not a fraction of totalDuration, unlike S1.json</span>
-        <span>{spec.duration.toFixed(2)}s</span>
+      <div className="mt-1 pl-12 text-[10px] text-muted-foreground">
+        seconds, not a fraction of totalDuration, unlike S1.json
       </div>
     </div>
   )
