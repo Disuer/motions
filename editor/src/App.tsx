@@ -107,6 +107,25 @@ export default function App() {
     })
   }
 
+  /**
+   * Adds a delta to one frame's offset, reading the offset it is added to inside the state
+   * updater rather than from the render's `spec`. The canvas drag binds `move` on window once, at
+   * pointerdown, so every event in the drag sees the props (and therefore the `spec`) of that one
+   * render, while the deltas it reports are incremental — computing the new offset out here would
+   * make each event write preDragOffset + oneIncrement and overwrite the drag so far instead of
+   * accumulating it. Key repeat on the arrow keys can outrun a render the same way. Same class of
+   * bug as the one specRef exists for: state read through a closure that outlives its render.
+   */
+  function nudgeFrame(i: number, dx: number, dy: number) {
+    editSpec((s) => {
+      s.frames[i] = {
+        ...s.frames[i],
+        offset: [s.frames[i].offset[0] + dx, s.frames[i].offset[1] + dy],
+      }
+      return s
+    })
+  }
+
   function nudgeAll(dx: number, dy: number) {
     editSpec((s) => {
       s.frames = nudgeAllFrames(s.frames, dx, dy)
@@ -254,9 +273,7 @@ export default function App() {
       e.preventDefault()
 
       if (selected === null) nudgeAll(dx, dy)
-      else updateFrame(selected, {
-        offset: [spec.frames[selected].offset[0] + dx, spec.frames[selected].offset[1] + dy],
-      })
+      else nudgeFrame(selected, dx, dy)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -474,6 +491,9 @@ export default function App() {
                     }
                   }}
                 >
+                  {/* frameIndex is safe to capture in onDragFrame: a drag cannot change which
+                      frame is being dragged. The offset it is added to must not be captured -
+                      see nudgeFrame. */}
                   <Canvas
                     spec={spec}
                     assets={character.motions[tab].assets}
@@ -482,10 +502,7 @@ export default function App() {
                     zoom={zoom}
                     pan={pan}
                     onPan={setPan}
-                    onDragFrame={(dx, dy) => updateFrame(frameIndex, {
-                      offset: [spec.frames[frameIndex].offset[0] + dx,
-                               spec.frames[frameIndex].offset[1] + dy],
-                    })}
+                    onDragFrame={(dx, dy) => nudgeFrame(frameIndex, dx, dy)}
                   />
                 </div>
                 <Inspector
