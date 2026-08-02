@@ -368,3 +368,6 @@ Directory.Build.props
 
 # mdbook output
 docs/book/
+
+# editor build output (node_modules/ is already covered above)
+editor/dist/
