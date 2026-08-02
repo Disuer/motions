@@ -256,6 +256,18 @@ export function newCoin(totalDuration = 1): Coin {
   }
 }
 
+/**
+ * The coins array with `n` guaranteed to exist, filling any gap on the way. Adding coin 3 to a
+ * one-coin file has to create 1 and 2 as well: an array cannot have a hole, and quietly appending
+ * at the end instead would put the coin somewhere other than the tab it was added from.
+ * Copies rather than mutating, like every other edit path - the document is compared by identity.
+ */
+export function withCoin(coins: Coin[], n: number): Coin[] {
+  const next = coins.slice()
+  while (next.length <= n) next.push(newCoin())
+  return next
+}
+
 export function newPhase(type: PhaseType, at: number): Phase {
   const phase: Phase = { type, start: at, end: at, steps: 1 }
   if (type === 'GiveDamage') phase.damageRatio = DEFAULT_DAMAGE_RATIO

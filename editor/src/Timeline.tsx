@@ -122,8 +122,10 @@ export default function Timeline({
 
       <div className="flex gap-2">
         {/* Track names, in a gutter beside the strips so nothing overlaps a marker sitting at 0s.
-            The heights here shadow the rows opposite: h-5 ruler, h-8 frames, h-6 sfx. */}
-        <div className="w-10 shrink-0 text-right text-[10px] text-muted-foreground">
+            The heights here shadow the rows opposite: h-5 ruler, h-8 frames, h-6 sfx.
+            w-16 to match the skill timeline's label column, whose longest label is hitCheckers -
+            the two strips have to be the same box for a fraction to sit over its second. */}
+        <div className="w-16 shrink-0 text-right text-[10px] text-muted-foreground">
           <div className="h-5" />
           <div className="flex h-8 items-center justify-end">frames</div>
           <div className="mt-1 flex h-6 items-center justify-end">sfx</div>
@@ -224,9 +226,13 @@ export default function Timeline({
             </div>
           )}
         </div>
+
+        {/* Matches the skill timeline's per-track + button (h-7 px-2 around a size-3 icon) plus
+            its gap-2, so the two strips are the same box and a fraction sits over its second. */}
+        <div className="w-9 shrink-0" />
       </div>
 
-      <div className="mt-1 pl-12 text-[10px] text-muted-foreground">
+      <div className="mt-1 pl-18 text-[10px] text-muted-foreground">
         seconds, not a fraction of totalDuration, unlike S1.json
       </div>
     </div>

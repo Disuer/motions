@@ -1,3 +1,5 @@
+import { compareNatural } from './spec'
+
 /**
  * The real MOTION_DETAIL enum, in declaration order. A snapshot of a game enum, so free text is
  * accepted too - the plugin logs an unknown name rather than crashing.
@@ -44,44 +46,107 @@ export function parseMotionFolder(folder: string): { base: string; coin: number 
   return { base: folder.slice(0, cut), coin: Number(suffix) }
 }
 
-export interface MotionVariant {
-  folder: string
-  /** Index into the array that was passed in, which is what specs and dirty are keyed by. */
-  index: number
-  /** 0 for the motion's own folder, 1+ for a coin. */
+/** One coin of a motion, and which of its two halves are actually there. */
+export interface CoinSlot {
+  /** 0-based, the index the game asks for. Shown as `coin ${coin + 1}`. */
   coin: number
+  /** Where the art lives, or would: `${base}` for coin 0, `${base}_${coin}` after. */
+  folder: string
+  /** Index into the motions array that was passed in, or null when that folder is not on disk. */
+  motion: number | null
+  /** Whether the skill file has a coins[coin]. False when there is no skill file at all. */
+  json: boolean
 }
 
-export interface MotionGroup {
+export interface MotionEntry {
   base: string
   /** Only a skill takes coins; the loader refuses _N on anything else (SpriteMotionLoader.cs:34). */
   takesCoins: boolean
-  variants: MotionVariant[]
+  /** Index into the skills array that was passed in, or null when there is no `${base}.json`. */
+  skill: number | null
+  /** One per coin either side knows about. Never empty. */
+  coins: CoinSlot[]
 }
 
 /**
- * Folders grouped into one entry per motion, with its coins under it. A flat tab strip put S1,
- * S1_1 and S1_2 side by side as if they were unrelated motions, when they are one skill and its
- * per-coin animations.
+ * One entry per motion, over the UNION of the motion folders and the skill files. The two halves
+ * of a coin are two files in two places - motions/S1_1/animation.json and S1.json's coins[1] - and
+ * listing only the folders (or only the file's coins) is what made a coin missing on one side
+ * unreachable from the other.
  *
- * Groups keep the order the folders arrived in, which is already natural-sorted, so S2 follows S1
- * and S10 follows S9. Coins are sorted by number within a group.
+ * The pairing is the plugin's: MotionInjector.cs:46-58 fills coinDurations[i] from folder
+ * <Motion>_i, with i = 0 being the bare <Motion> folder, and TimelineBuilder.cs:385 indexes that
+ * array by the JSON coins[] index. So coins[0] is motions/S1/ and coins[1] is motions/S1_1/.
+ *
+ * `skills` is passed as name-and-count rather than the loaded documents so this file stays free of
+ * fs.ts - the same reason SpriteMotionSpec.cs takes an isKnownName predicate instead of importing
+ * MOTION_DETAIL.
  */
-export function groupMotions(folders: string[]): MotionGroup[] {
-  const groups = new Map<string, MotionGroup>()
+export function mergeMotions(
+  folders: string[],
+  skills: { name: string; coins: number }[],
+): MotionEntry[] {
+  /** base -> coin -> index into `folders`. */
+  const owned = new Map<string, Map<number, number>>()
+  /** base -> index into `skills`. */
+  const files = new Map<string, number>()
 
   folders.forEach((folder, index) => {
     const { base, coin } = parseMotionFolder(folder)
-    const group = groups.get(base) ?? { base, takesCoins: isSkill(base), variants: [] }
-    group.variants.push({ folder, index, coin })
-    groups.set(base, group)
+    const mine = owned.get(base) ?? new Map<number, number>()
+    mine.set(coin, index)
+    owned.set(base, mine)
   })
+  skills.forEach((sk, index) => files.set(sk.name.replace(/\.json$/i, ''), index))
 
-  for (const group of groups.values()) group.variants.sort((a, b) => a.coin - b.coin)
-  return [...groups.values()]
+  const bases = [...new Set([...owned.keys(), ...files.keys()])]
+  // Sorted rather than left in arrival order: the folders and the skill files are each already
+  // natural-sorted, but interleaving them is not, and a JSON-only S2 belongs between S1 and S10.
+  bases.sort(compareNatural)
+
+  return bases.map((base) => {
+    const mine = owned.get(base) ?? new Map<number, number>()
+    const skill = files.get(base) ?? null
+    const jsonCoins = skill === null ? 0 : skills[skill].coins
+    const highest = mine.size > 0 ? Math.max(...mine.keys()) : -1
+    // At least one, so every motion has a coin to show even when neither side has anything to say.
+    const count = Math.max(highest + 1, jsonCoins, 1)
+
+    return {
+      base,
+      takesCoins: isSkill(base),
+      skill,
+      coins: Array.from({ length: count }, (_, coin) => ({
+        coin,
+        folder: coin === 0 ? base : `${base}_${coin}`,
+        motion: mine.get(coin) ?? null,
+        json: coin < jsonCoins,
+      })),
+    }
+  })
 }
 
-/** The coin number a "+ coin" button should create next: one past the highest already there. */
-export function nextCoin(group: MotionGroup): number {
-  return group.variants.reduce((max, v) => Math.max(max, v.coin), 0) + 1
+/**
+ * The slot for a coin, whether or not it exists yet. Selecting one past the end is how a coin is
+ * added: the panel for an empty slot is what offers to create each half.
+ */
+export function slotFor(entry: MotionEntry, coin: number): CoinSlot {
+  return entry.coins[coin] ?? {
+    coin,
+    folder: coin === 0 ? entry.base : `${entry.base}_${coin}`,
+    motion: null,
+    json: false,
+  }
+}
+
+/**
+ * The motion whose duration the game will use for this coin, or null when none does - in which
+ * case the file's own totalDuration is what runs. Follows MotionData.TryGetSpriteMotion: the
+ * coin's own folder, else the bare folder for any coin above 0.
+ */
+export function spriteFor(entry: MotionEntry, coin: number): number | null {
+  const own = entry.coins[coin]?.motion
+  if (own !== null && own !== undefined) return own
+  if (coin > 0) return entry.coins[0]?.motion ?? null
+  return null
 }

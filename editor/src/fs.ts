@@ -63,7 +63,6 @@ export interface LoadedCharacter {
    * fallback, not the author's, so writing it back would replace their choice with a guess.
    */
   appearanceReadable: boolean
-  s1Warning: string | null
 }
 
 /** The plugin's fallback donor when appearance.json is missing (AppearanceRegistry.DefaultBase). */
@@ -412,13 +411,11 @@ export async function loadCharacter(
 ): Promise<LoadedCharacter> {
   const motions: LoadedMotion[] = []
   const skills: LoadedSkill[] = []
-  let s1Warning: string | null = null
 
   for await (const entry of handle.values()) {
     if (entry.kind === 'file' && isSkillFile(entry.name)) {
       const text = (await readText(handle, entry.name)) ?? ''
       const warning = checkSkillJson(text, entry.name)
-      s1Warning ??= warning
       const { skill, error } = parseSkill(text)
       skills.push({ name: entry.name, skill, error, text, warning })
     }
@@ -462,7 +459,6 @@ export async function loadCharacter(
     appearanceBase,
     hadAppearanceJson: appearanceText !== null,
     appearanceReadable,
-    s1Warning,
   }
 }
 

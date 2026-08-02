@@ -25,6 +25,16 @@ const pct = (v: number) => `${clampFraction(v) * 100}%`
 const TICKS = Array.from({ length: 11 }, (_, i) => i / 10)
 const GRID = gridImage('10%')
 
+/**
+ * A tick's label. The axis is a 0..1 fraction, but when a sprite motion resolves for the coin its
+ * duration is what the game runs (TimelineBuilder.cs:385), so the same tick can be named in the
+ * seconds the timeline above is ruled in and the two read as one axis.
+ */
+export function rulerLabel(t: number, seconds: number | null): string {
+  if (seconds === null || seconds <= 0) return `${+t.toFixed(1)}`
+  return `${+(t * seconds).toFixed(2)}s`
+}
+
 /** Where a marker sits, as a fraction. hitCheckers use `time`; everything else uses `start`. */
 export function positionOf(coin: Coin, m: Marker): number {
   if (m.track === 'phases') return coin.phases[m.index]?.start ?? 0
@@ -49,12 +59,41 @@ export function widthOf(coin: Coin, m: Marker): number {
   return coin.totalDuration > 0 ? seconds / coin.totalDuration : 0
 }
 
+/**
+ * Writes fields onto one marker, in place. Lives here rather than in the panel because both the
+ * inspector and the Delete key reach for it, and it takes the same (coin, marker) pair positionOf
+ * and widthOf do.
+ */
+export function patchMarker(coin: Coin, m: Marker, patch: Record<string, unknown>): void {
+  const list = m.track === 'phases' ? coin.phases : coin[m.track]
+  const item = list?.[m.index] as Record<string, unknown> | undefined
+  if (!item) return
+  for (const [key, v] of Object.entries(patch)) {
+    // undefined means the field was cleared, and cleared means the key goes. Assigning undefined
+    // would leave it present in the object; JSON.stringify happens to drop it, but then the model
+    // and the file disagree about whether it is set.
+    if (v === undefined) delete item[key]
+    else item[key] = v
+  }
+}
+
+/** Removes one marker from its track, in place. */
+export function removeMarker(coin: Coin, m: Marker): void {
+  const list = m.track === 'phases' ? coin.phases : coin[m.track]
+  list?.splice(m.index, 1)
+}
+
 function countOf(coin: Coin, key: TrackKey): number {
   return (key === 'phases' ? coin.phases : coin[key])?.length ?? 0
 }
 
 interface Props {
   coin: Coin
+  /**
+   * The seconds this coin actually runs for, or null when nothing overrides totalDuration. Only
+   * changes how the axis is labelled; every position on it is still a fraction.
+   */
+  duration: number | null
   selected: Marker | null
   onSelect: (m: Marker) => void
   /** Moves a marker to a fraction. A phase keeps its length, so this sets start and end together. */
@@ -62,7 +101,7 @@ interface Props {
   onAdd: (track: TrackKey, at: number) => void
 }
 
-export default function SkillTimeline({ coin, selected, onSelect, onMove, onAdd }: Props) {
+export default function SkillTimeline({ coin, duration, selected, onSelect, onMove, onAdd }: Props) {
   const strips = useRef<Map<TrackKey, HTMLDivElement | null>>(new Map())
 
   function fractionAt(track: TrackKey, clientX: number): number {
@@ -95,14 +134,16 @@ export default function SkillTimeline({ coin, selected, onSelect, onMove, onAdd 
         <span className="text-muted-foreground">
           Positions are a fraction of <code>totalDuration</code>, so 0.5 is halfway.
         </span>
-        <span className="tabular-nums text-muted-foreground">{coin.totalDuration}s</span>
+        <span className="tabular-nums text-muted-foreground">
+          {duration ?? coin.totalDuration}s
+        </span>
       </div>
 
       <div className="flex flex-col gap-1 p-3">
         {/* Same gutters as a track row: w-16 label + gap-2 on the left, add button + gap on the
             right, so a tick sits over the fraction it names. */}
         <div className="pl-18 pr-9">
-          <Ruler ticks={TICKS} at={pct} label={(t) => `${+t.toFixed(1)}`} />
+          <Ruler ticks={TICKS} at={pct} label={(t) => rulerLabel(t, duration)} />
         </div>
 
         {TRACKS.map((track) => (

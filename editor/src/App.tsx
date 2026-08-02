@@ -6,7 +6,7 @@ import Canvas, { ZOOM_MAX, ZOOM_MIN } from './Canvas'
 import Inspector from './Inspector'
 import MotionPicker from './MotionPicker'
 import NewCharacter from './NewCharacter'
-import SkillEditor from './SkillEditor'
+import CoinTimings from './CoinTimings'
 import Timeline from './Timeline'
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -28,11 +28,11 @@ import {
   findCharacters, importAssets, isModsRoot, loadCharacter, nameRejection, pickFolder, recallFolder,
   rememberFolder, revokeAssets, writeFile,
 } from './fs'
-import { groupMotions, nextCoin, parseMotionFolder } from './motions'
+import { MOTION_NAMES, MotionEntry, mergeMotions, slotFor, spriteFor } from './motions'
 import { boundsOf } from './png'
 import { AnimationSpec, DEFAULT_FPS, Frame, frameIndexAt, serialiseSpec } from './spec'
-import { Skill, serialiseSkill } from './skill'
-import { Marker } from './SkillTimeline'
+import { Coin, Skill, newCoin, serialiseSkill, withCoin } from './skill'
+import { Marker, removeMarker } from './SkillTimeline'
 import {
   addFrameAt, addSfx, alignFrame, carryOver, carryOverNamed, clampFrameIndex, duplicateFrame,
   nudgeAllFrames,
@@ -84,7 +84,16 @@ export default function App() {
   const [creating, setCreating] = useState<{ handle: FileSystemDirectoryHandle; modsRoot: boolean } | null>(null)
   /** A picked folder that held no character, which is normal for a mod folder just made, and for mods/. */
   const [empty, setEmpty] = useState<{ handle: FileSystemDirectoryHandle; modsRoot: boolean } | null>(null)
-  const [tab, setTab] = useState(0)
+  /**
+   * Which motion and coin are on screen. By NAME rather than by index, because the two halves of
+   * a coin are indexed differently - motions/S1_1/ is an index into character.motions, coins[1] is
+   * an index into a skill document - and a coin can exist on one side and not the other. Empty
+   * name means "whichever is first", so nothing has to seed it and a name that stops existing -
+   * a folder deleted outside the editor, a character switched to - falls back rather than showing
+   * an empty screen. Not `base`: that is taken, by the appearance donor below.
+   */
+  const [motionBase, setMotionBase] = useState('')
+  const [coin, setCoin] = useState(0)
   const [frameIndex, setFrameIndex] = useState(0)
   const [onionSkin, setOnionSkin] = useState(true)
   const [zoom, setZoom] = useState(1)
@@ -99,12 +108,8 @@ export default function App() {
   // whose -1 already means the donor base and whose other values are motion indices.
   const [skillDocs, setSkillDocs] = useState<(Skill | null)[]>([])
   const [dirtySkills, setDirtySkills] = useState<Set<number>>(new Set())
-  const [skillTab, setSkillTab] = useState(0)
-  const [coinTab, setCoinTab] = useState(0)
   /** The selected marker on the coin timeline, or null when nothing is selected. */
   const [marker, setMarker] = useState<Marker | null>(null)
-  /** Which half of the character is on screen. Sprite motions and skill timings are separate files. */
-  const [view, setView] = useState<'motions' | 'skills'>('motions')
   const [selected, setSelected] = useState<number | null>(null)
   /** The selected sound on the timeline. Non-null takes the inspector over from the frame. */
   const [sfxIndex, setSfxIndex] = useState<number | null>(null)
@@ -139,19 +144,43 @@ export default function App() {
   const characterRef = useRef<LoadedCharacter | null>(null)
   const switched = character !== null && characterRef.current?.handle !== character.handle
 
-  /**
-   * The view actually on screen. `view` is what was asked for; this is what the character can
-   * show. The two came apart because the toggle only renders when there are skill files while the
-   * skills pane rendered on `view` alone: switching to a sibling with no skill files left the
-   * motions UI hidden behind a `view` of 'skills' and no toggle to get back. Derived rather than
-   * reset in each switch path, so the same cannot happen through a re-read or a file being
-   * deleted outside the editor either.
-   */
-  const activeView = view === 'skills' && (character?.skills.length ?? 0) > 0 ? 'skills' : 'motions'
-
   useEffect(() => {
     if (character && (switched || !dirtyRef.current.has(-1))) setBase(character.appearanceBase)
   }, [character, switched])
+
+  // One entry per motion, over the union of the motion folders and the <Motion>.json files - so a
+  // skill with a file and no folders, or folders and no file, is reachable either way. The coin
+  // count comes from the EDITED documents, not the disk copies, or adding a coin would not add a
+  // tab; the disk copy is the fallback for the single render before skillDocs is populated.
+  const merged = character
+    ? mergeMotions(
+        character.motions.map((m) => m.folder),
+        character.skills.map((sk, i) => ({
+          name: sk.name,
+          coins: (skillDocs[i] ?? sk.skill)?.coins.length ?? 0,
+        })),
+      )
+    : []
+  const entry: MotionEntry | undefined = merged.find((e) => e.base === motionBase) ?? merged[0]
+  const slot = entry ? slotFor(entry, coin) : null
+  /** Index into character.motions, or null when this coin has no folder of its own yet. */
+  const tab = slot?.motion ?? null
+  /** The motion on screen, or null when this coin has no folder. */
+  const here = tab === null || !character ? null : character.motions[tab]
+  /** Index into character.skills, or null when there is no `${motionBase}.json`. */
+  const skillIndex = entry?.skill ?? null
+  /**
+   * The skill document on screen: the edited copy, or the one read from disk for the single
+   * render before the carryOver effect populates skillDocs. null means the file could not be
+   * parsed, which is the only absence the render below has to tell apart - undefined is not a
+   * state anything downstream should have to think about, and treating it as "parsed fine" is
+   * what crashed this on every character with a skill file.
+   */
+  const doc = skillIndex === null
+    ? null
+    : skillDocs[skillIndex] ?? character?.skills[skillIndex].skill ?? null
+
+  const spec = tab === null ? undefined : specs[tab]
 
   // Folders loaded so far, in the order specs/dirty currently index by. Updated at the end of the
   // effect below, so it always holds the order from BEFORE the character that effect is reacting to.
@@ -160,7 +189,7 @@ export default function App() {
   // state-after-its-render trap as dirtyRef above.
   const specsRef = useRef(specs)
   specsRef.current = specs
-  const tabRef = useRef(tab)
+  const tabRef = useRef<number | null>(tab)
   tabRef.current = tab
   const skillDocsRef = useRef(skillDocs)
   skillDocsRef.current = skillDocs
@@ -174,12 +203,14 @@ export default function App() {
     // `character`; a switch to a different character replaces it too, and the two must not be
     // treated the same. carryOver is where that distinction lives, and where it is tested.
     const next = carryOver(
-      prevMotionsRef.current, specsRef.current, dirtyRef.current, tabRef.current,
+      prevMotionsRef.current, specsRef.current, dirtyRef.current, 0,
       character.motions, switched,
     )
     setSpecs(next.specs)
     setDirty(next.dirty)
-    setTab(next.tab)
+    // next.tab is ignored: selection is by name now, so a re-read that re-sorts the folders keeps
+    // the same coin on screen without remapping anything. carryOver keeps returning it for its
+    // own tests; it is not this screen's source of truth any more.
 
     // Same rule, same reason: two characters both have an S1.json, so a switch must carry none
     // of it. structuredClone so editing never writes through to character.skills, which stays the
@@ -195,8 +226,8 @@ export default function App() {
     prevSkillNamesRef.current = character.skills.map((sk) => sk.name)
 
     if (switched) {
-      setSkillTab(0)
-      setCoinTab(0)
+      setMotionBase('')
+      setCoin(0)
       setMarker(null)
       // Both index into the outgoing character's frames, and the new one may have fewer.
       setFrameIndex(0)
@@ -219,7 +250,6 @@ export default function App() {
     setCharacter(next)
   }
 
-  const spec = specs[tab]
   // Timeline's pointerup handler is bound once, at the start of a drag, via a raw
   // window.addEventListener - it does not pick up new closures from the re-renders that happen
   // mid-drag as onFrameTime updates state. Kept current on every render (not in an effect, which
@@ -228,6 +258,8 @@ export default function App() {
   specRef.current = spec
 
   function editSpec(patch: (s: AnimationSpec) => AnimationSpec) {
+    // A coin with no folder of its own has no spec to edit; the panel offers to create one.
+    if (tab === null) return
     setSpecs((prev) => prev.map((s, i) => (i === tab ? patch(structuredClone(s)) : s)))
     setDirty((prev) => new Set(prev).add(tab))
   }
@@ -237,9 +269,35 @@ export default function App() {
    * does: the document is handed to a timeline that compares by identity, and mutating in place
    * leaves it drawing the previous render's numbers.
    */
-  function editSkill(patch: (s: Skill) => Skill) {
-    setSkillDocs((prev) => prev.map((doc, i) => (i === skillTab && doc ? patch(structuredClone(doc)) : doc)))
-    setDirtySkills((prev) => new Set(prev).add(skillTab))
+  function editSkill(index: number, patch: (s: Skill) => Skill) {
+    // Nothing to patch means nothing to flag. The map below already skips a document that is
+    // null (unparseable) or not carried over yet, and marking it dirty anyway would leave Save
+    // counting and offering to write a file it has no edited copy of.
+    if (!skillDocs[index]) return
+    setSkillDocs((prev) => prev.map((doc, i) => (i === index && doc ? patch(structuredClone(doc)) : doc)))
+    setDirtySkills((prev) => new Set(prev).add(index))
+  }
+
+  /** Edits one coin of one skill document. Built on editSkill so the dirty tracking is the same. */
+  function editCoin(index: number, at: number, patch: (c: Coin) => void) {
+    editSkill(index, (s) => {
+      const c = s.coins[at]
+      if (c) patch(c)
+      return s
+    })
+  }
+
+  /**
+   * The seconds a coin actually runs for, or null when its file's totalDuration is what runs.
+   * TimelineBuilder.cs:385 replaces totalDuration with the sprite motion's duration wherever one
+   * resolves, so this is what decides whether that field is a setting or a readout.
+   */
+  function durationOf(e: MotionEntry, at: number): number | null {
+    const i = spriteFor(e, at)
+    if (i === null) return null
+    // The edited spec, not the disk copy: retiming the animation retimes the coin, and the
+    // fractions drawn against it have to move with it rather than a save later.
+    return (specs[i] ?? character!.motions[i].spec).duration
   }
 
   function updateFrame(i: number, patch: Partial<Frame>) {
@@ -274,9 +332,8 @@ export default function App() {
    * an arrow key nudged a frame that was not on screen. Non-null selected follows the viewed
    * frame; null keeps meaning "arrows move ALL frames".
    */
-  /** Selecting a motion, from either tab row. Both rows choose the same `tab` index. */
-  function goToMotion(index: number) {
-    setTab(index)
+  /** Resets what a frame index means when the motion under it changes. */
+  function goToFrameless() {
     setFrameIndex(0)
     setSelected(null)
     setSfxIndex(null)
@@ -302,6 +359,7 @@ export default function App() {
    * (Task 7) from an index surviving a frames-array change unremapped.
    */
   function removeSelectedFrame(i: number) {
+    if (!spec) return
     const before = spec.frames.length
     if (before <= 1) return
     editSpec((s) => {
@@ -329,7 +387,8 @@ export default function App() {
    * the drag can reorder a different, selected frame past the one being dragged.
    */
   function onFrameDragEnd(i: number) {
-    const current = specRef.current.frames
+    const current = specRef.current?.frames
+    if (!current) return
     const sorted = sortFramesByTime(current)
     editSpec((s) => {
       s.frames = sortFramesByTime(s.frames)
@@ -340,7 +399,9 @@ export default function App() {
   }
 
   async function alignAll(axis: 'xy' | 'x') {
-    const motion = character!.motions[tab]
+    // Both are on screen whenever the buttons are, but a coin with no folder has neither.
+    if (!spec || !here) return
+    const motion = here
     // Each frame's decode is caught individually, so one corrupt or missing PNG leaves that
     // frame unchanged instead of rejecting the whole Promise.all and silently no-oping the
     // entire align: partial alignment is more useful than none.
@@ -465,6 +526,19 @@ export default function App() {
     }
   }
 
+  // Creates a file rather than a folder, and otherwise the same deal as createMotion: written
+  // straight away because its existence is the act, then edited and saved like any other. Only
+  // ever <Motion>.json at the character folder, which is the one place the plugin reads them.
+  async function createSkillFile(name: string) {
+    setProblem(null)
+    try {
+      await writeFile(character!.handle, `${name}.json`, serialiseSkill({ coins: [newCoin()] }))
+      replaceCharacter(await loadCharacter(character!.handle, character!.mode))
+    } catch (e) {
+      setProblem(`Could not create ${name}.json: ${why(e)}`)
+    }
+  }
+
   // Selection decides the target: a frame selected moves that frame, nothing selected moves
   // every frame at once.
   useEffect(() => {
@@ -474,10 +548,7 @@ export default function App() {
       // arrow-key nudge of a clean tab sitting behind the dialog - may change editor state while
       // it's open. The discard prompt counts too: it names a number of unsaved changes, and a
       // nudge behind it would make that number wrong while it is on screen.
-      // Also gated on the view: these keys nudge and delete sprite frames, and the skills view has
-      // no frame on screen to act on. Without this, arrows typed while editing a coin would move
-      // frames in a motion nobody is looking at.
-      if (pending || leaving || activeView !== 'motions' || !spec) return
+      if (pending || leaving) return
       // Anything focused that owns its own arrow keys handles them itself. This used to be a
       // tagName list of INPUT/SELECT/TEXTAREA, which was true of the native controls it was
       // written against and quietly false afterwards: the component library renders a tab as
@@ -490,25 +561,31 @@ export default function App() {
       const focused = document.activeElement as HTMLElement | null
       if (focused && focused !== document.body && focused.closest(INTERACTIVE)) return
 
-      // Removes whatever the inspector is showing: the sound if one is selected, otherwise the
-      // frame being viewed. Targeting the frame unconditionally, as this did before sounds could
-      // be selected, meant Delete removed a frame while the panel showed a sound.
-      // frameIndex, not `selected`: the latter only steers arrow-key nudges and is usually null.
+      // Removes whatever the panels are showing, innermost selection first: a skill marker, else
+      // the sound, else the frame being viewed. Each step was added when its selection became
+      // possible - targeting the frame unconditionally deleted a frame while the panel showed a
+      // sound, and both halves of a coin are now on screen at once, so a selected phase would go
+      // the same way. frameIndex, not `selected`: the latter only steers arrow-key nudges.
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
-        if (sfxIndex !== null) {
+        if (marker !== null && skillIndex !== null && doc?.coins[coin]) {
+          editCoin(skillIndex, coin, (c) => removeMarker(c, marker))
+          setMarker(null)
+        } else if (sfxIndex !== null) {
           editSpec((s) => ({ ...s, sfx: removeSfx(s.sfx, sfxIndex) }))
           setSfxIndex(null)
-        } else {
+        } else if (spec) {
           removeSelectedFrame(frameIndex)
         }
         return
       }
 
+      // Arrows act on sprite frames only, so a coin with no folder of its own has nothing for
+      // them to move. Skill markers stay drag-only.
       const step = e.shiftKey ? 0.1 : 0.01
       const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0
       const dy = e.key === 'ArrowUp' ? step : e.key === 'ArrowDown' ? -step : 0
-      if (dx === 0 && dy === 0) return
+      if ((dx === 0 && dy === 0) || !spec) return
       e.preventDefault()
 
       if (selected === null) nudgeAll(dx, dy)
@@ -516,7 +593,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [selected, spec, tab, pending, leaving, activeView, frameIndex, sfxIndex])
+  }, [selected, spec, tab, pending, leaving, frameIndex, sfxIndex, marker, skillIndex, coin, skillDocs])
 
   // Steps through frames with the same frameIndexAt lookup the runtime uses, rather than
   // tweening: a blended preview would have authors aligning frames against a lie.
@@ -529,10 +606,12 @@ export default function App() {
     const playing: HTMLAudioElement[] = []
 
     const fire = (from: number, to: number) => {
-      for (const s of sfxIn(specRef.current.sfx, from, to)) {
+      for (const s of sfxIn(specRef.current?.sfx ?? [], from, to)) {
         // characterRef/tabRef for the same reason the frame lookup below uses specRef: this loop
         // outlives the render that started it, and an import mid-preview revokes the old URLs.
-        const sound = characterRef.current?.motions[tabRef.current]?.sounds.get(s.file)
+        const sound = tabRef.current === null
+          ? undefined
+          : characterRef.current?.motions[tabRef.current]?.sounds.get(s.file)
         // A sound named in animation.json with no file beside it is silent here, exactly as it is
         // in game. It is not an error to report from a render loop.
         if (!sound) continue
@@ -559,7 +638,7 @@ export default function App() {
       // specRef, not spec: dragging a marker while the preview is running must not restart this
       // effect (that would reset `started` and jump the clock to zero), but the preview still
       // needs to see the frame's live time, not the one it had when playback started.
-      setFrameIndex(Math.max(0, frameIndexAt(specRef.current.frames.map((f) => f.t), t)))
+      setFrameIndex(Math.max(0, frameIndexAt(specRef.current?.frames.map((f) => f.t) ?? [], t)))
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
@@ -717,7 +796,6 @@ export default function App() {
     setSkillDocs([])
     setDirtySkills(new Set())
     setMarker(null)
-    setView('motions')
     setSaved(null)
     setPlayhead(null)
   }
@@ -883,22 +961,15 @@ export default function App() {
     )
   }
 
-  // The EDITED spec's frame count - character.motions[tab].spec is the immutable disk copy, so
+  // The EDITED spec's frame count - here.spec is the immutable disk copy, so
   // counting it left "/ 2" on screen after three frames were added and let `next` walk the index
   // off the end of the array the canvas actually draws. The disk copy stays as the fallback for
   // the single render before the effect above populates `specs`.
-  const frameCount = (spec ?? character.motions[tab]?.spec)?.frames.length ?? 0
+  const frameCount = (spec ?? here?.spec)?.frames.length ?? 0
   // Everything findCharacters turned up in the mod this character came from, minus this one.
   const siblings = known(choices).filter((c) => c.handle !== character.handle)
   // Files differing from disk, across both halves of the character.
   const unsaved = dirty.size + dirtySkills.size
-
-  // The tab rows: one entry per motion, with its coin folders under it.
-  const groups = groupMotions(character.motions.map((m) => m.folder))
-  const here = character.motions[tab]
-  const group = here ? groups.find((g) => g.base === parseMotionFolder(here.folder).base) : undefined
-  const coin = here ? parseMotionFolder(here.folder).coin : 0
-
 
   return (
     <main className="p-8">
@@ -968,85 +1039,28 @@ export default function App() {
         </Alert>
       )}
 
-      {/* Only while the skills view is not open. In there each file carries its own copy of this
-          warning next to the coin it is about, which is more use than one line at the top. */}
-      {character.s1Warning && activeView === 'motions' && (
-        <Alert className="mt-4">
-          <TriangleAlert />
-          <AlertDescription>{character.s1Warning}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* The two halves of a character are different files in different places: sprite frames in
-          motions/<Motion>/animation.json, attack timings in S1.json beside the bundle. Only shown
-          when there is a second half to switch to. */}
-      {character.skills.length > 0 && (
-        <div className="mt-4">
-          <Tabs value={activeView} onValueChange={(v) => setView(v === 'skills' ? 'skills' : 'motions')}>
-            <TabsList>
-              <TabsTrigger value="motions">Sprite motions</TabsTrigger>
-              <TabsTrigger value="skills">
-                Skill timings
-                {dirtySkills.size > 0 && ` (${dirtySkills.size})`}
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-      )}
-
-      {activeView === 'skills' && (
-        <>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <Tabs value={String(skillTab)}
-                  onValueChange={(v) => { setSkillTab(Number(v)); setCoinTab(0); setMarker(null) }}>
-              <TabsList>
-                {character.skills.map((sk, i) => (
-                  <TabsTrigger key={sk.name} value={String(i)}>
-                    {sk.name.replace(/\.json$/i, '')}
-                    {dirtySkills.has(i) && ' •'}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          </div>
-
-          {character.skills[skillTab] && (
-            <SkillEditor
-              file={character.skills[skillTab]}
-              doc={skillDocs[skillTab] ?? null}
-              coinTab={coinTab}
-              selected={marker}
-              onCoinTab={setCoinTab}
-              onSelect={setMarker}
-              onEdit={editSkill}
-            />
-          )}
-        </>
-      )}
-
-      {activeView === 'motions' && (
-      <>
       <div className="mt-4 flex items-center gap-2">
-        {/* One tab per motion, with its coins on the row below rather than beside it. A flat strip
-            put S1, S1_1 and S1_2 side by side as if they were unrelated motions, when they are one
-            skill and its per-coin animations. `tab` is still the index into character.motions,
-            which is what specs and dirty are keyed by; the two rows just choose it together. */}
-        <Tabs value={group?.base ?? ''}
-              // selected is a frame index into the OLD tab's spec; carrying it into a motion with
+        {/* One tab per motion, over the union of the motion folders and the <Motion>.json files.
+            A skill that exists only as S1.json used to have no tab here at all, so its coins were
+            reachable only from the other view. */}
+        <Tabs value={entry?.base ?? ''}
+              // selected is a frame index into the OLD coin's spec; carrying it into a motion with
               // fewer frames would crash the arrow-key handler on spec.frames[selected].offset.
               // null is the safe reset - it means "arrows move ALL frames", not "frame 0 of the
               // wrong motion".
-              onValueChange={(v) => {
-                const next = groups.find((g) => g.base === v)
-                if (next) goToMotion(next.variants[0].index)
-              }}>
+              onValueChange={(v) => { setMotionBase(v); setCoin(0); setMarker(null); goToFrameless() }}>
           <TabsList>
-            {groups.map((g) => (
-              <TabsTrigger key={g.base} value={g.base}>
-                {g.base}
-                {g.variants.length > 1 && (
-                  <span className="ml-1 text-[10px] opacity-60">{g.variants.length}</span>
+            {merged.map((e) => (
+              <TabsTrigger key={e.base} value={e.base}>
+                {e.base}
+                {e.coins.length > 1 && (
+                  <span className="ml-1 text-[10px] opacity-60">{e.coins.length}</span>
                 )}
+                {/* The skill file's unsaved marker. It used to live on the "Skill timings" tab,
+                    which this strip replaced; without it here an edited S1.json shows up only in
+                    the Save count. Per motion, not per coin, because dirtiness is tracked per
+                    file - the coin row's dot is the sprite half, which is per folder. */}
+                {e.skill !== null && dirtySkills.has(e.skill) && ' •'}
               </TabsTrigger>
             ))}
           </TabsList>
@@ -1058,42 +1072,78 @@ export default function App() {
         />
       </div>
 
-      {/* Only for a skill: the loader refuses _N on anything else (SpriteMotionLoader.cs:34), so
-          offering to add a coin to Idle would be offering a folder it will skip with a warning. */}
-      {group?.takesCoins && (
+      {/* Coin n is coins[n] AND motions/<base>_<n>/, with motions/<base>/ as coin 0 - the pairing
+          MotionInjector.cs:46-58 and TimelineBuilder.cs:385 make between the two files. One
+          numbering, so the strip can list a coin that only one side has. */}
+      {entry && (entry.takesCoins || entry.coins.length > 1) && (
         <div className="mt-2 flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Coins</span>
           <Tabs value={String(coin)}
-                onValueChange={(v) => {
-                  const next = group.variants.find((x) => String(x.coin) === v)
-                  if (next) goToMotion(next.index)
-                }}>
+                onValueChange={(v) => { setCoin(Number(v)); setMarker(null); goToFrameless() }}>
             <TabsList>
-              {group.variants.map((v) => (
-                <TabsTrigger key={v.coin} value={String(v.coin)}>
-                  {v.coin === 0 ? 'all coins' : `coin ${v.coin}`}
-                  {dirty.has(v.index) && ' •'}
-                </TabsTrigger>
-              ))}
+              {/* One past the end while a new coin is being set up, so the tab it is created from
+                  is on screen and selected rather than appearing only after the first write. */}
+              {Array.from({ length: Math.max(entry.coins.length, coin + 1) }, (_, i) => {
+                const s = slotFor(entry, i)
+                return (
+                  <TabsTrigger key={i} value={String(i)}>
+                    coin {i + 1}
+                    {s.motion !== null && dirty.has(s.motion) && ' •'}
+                  </TabsTrigger>
+                )
+              })}
             </TabsList>
           </Tabs>
 
-          <Button variant="outline" size="sm"
-                  title={`Creates motions/${group.base}_${nextCoin(group)}/`}
-                  onClick={() => void createMotion(`${group.base}_${nextCoin(group)}`)}>
-            <Plus className="size-3.5" />
-            Add coin
-          </Button>
-
-          <span className="text-xs text-muted-foreground">
-            {group.variants.some((v) => v.coin === 0)
-              ? `Coins with no animation of their own use ${group.base}.`
-              : `No ${group.base} folder, so a coin without its own animation has no fallback.`}
-          </span>
+          {/* Only for a skill: the loader refuses _N on anything else (SpriteMotionLoader.cs:34),
+              so offering to add a coin to Idle would be offering a folder it skips with a warning. */}
+          {entry.takesCoins && (
+            <Button variant="outline" size="sm"
+                    title={`Selects coin ${entry.coins.length + 1}, which neither file has yet`}
+                    onClick={() => { setCoin(entry.coins.length); setMarker(null); goToFrameless() }}>
+              <Plus className="size-3.5" />
+              Add coin
+            </Button>
+          )}
         </div>
       )}
 
-      {character.motions[tab] && (
+      {/* One line under the coin strip about the coin on screen, read from the two files
+          together. Each is a plugin behaviour neither half could see on its own. */}
+      {entry && slot && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          {here !== null && skillIndex !== null && !slot.json
+            // TimelineBuilder emits one timeline per coins[] entry, so a folder past the end of
+            // that array is art the game never reaches. Silent until now.
+            ? `motions/${slot.folder}/ has art, but ${character.skills[skillIndex].name} has no coin ${coin + 1}, so the game never builds it.`
+            : here === null && spriteFor(entry, coin) !== null
+              ? `Coin ${coin + 1} has no folder of its own, so it animates with motions/${entry.base}/.`
+              : entry.takesCoins && slot.coin === 0 && here !== null
+                ? `motions/${entry.base}/ is coin 1, and the fallback every coin without its own folder uses.`
+                : ''}
+        </p>
+      )}
+
+      {/* A coin selected from the strip that has no folder of its own - either a gap the skill
+          file implies, or the one past the end that Add coin selects. */}
+      {entry && slot && here === null && (
+        <div className="mt-3 rounded-lg border p-4">
+          <p className="text-sm font-medium">
+            No <code>motions/{slot.folder}/</code> yet.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {spriteFor(entry, coin) !== null
+              ? `Coin ${coin + 1} uses motions/${entry.base}/ until it has a folder of its own.`
+              : `Nothing animates coin ${coin + 1}: there is no motions/${entry.base}/ to fall back on either.`}
+          </p>
+          <Button size="sm" className="mt-3" onClick={() => void createMotion(slot.folder)}>
+            <Plus className="size-3.5" />
+            Create motions/{slot.folder}/
+          </Button>
+        </div>
+      )}
+
+      {here && (
         <>
           <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
             <div className="flex items-center gap-2">
@@ -1164,7 +1214,7 @@ export default function App() {
                     // async handler that rejects takes the whole drop down without a word.
                     let result
                     try {
-                      result = await importAssets(character.motions[tab].handle, files)
+                      result = await importAssets(here.handle, files)
                     } catch (err) {
                       setProblem(
                         `Could not import ${files.map((f) => f.name).join(', ')}: ${why(err)}\n` +
@@ -1196,7 +1246,7 @@ export default function App() {
                       see nudgeFrame. */}
                   <Canvas
                     spec={spec}
-                    assets={character.motions[tab].assets}
+                    assets={here.assets}
                     index={frameIndex}
                     onionSkin={onionSkin}
                     zoom={zoom}
@@ -1247,7 +1297,7 @@ export default function App() {
                       without hand-editing the JSON. The tag says which are not on the timeline
                       yet, which is the part that was actually worth knowing. */}
                   <div className="mt-2 flex flex-col gap-1">
-                    {[...character.motions[tab].assets.keys()].map((name) => {
+                    {[...here.assets.keys()].map((name) => {
                       const used = spec.frames.some((f) => f.sprite === name)
                       return (
                         <Button key={name} variant="outline" size="sm"
@@ -1274,12 +1324,12 @@ export default function App() {
                       can fire several times in a motion. */}
                   <div className="mt-4 text-xs font-medium">Sounds</div>
                   <p className="mt-1 text-[10px] leading-tight text-muted-foreground">
-                    {character.motions[tab].sounds.size > 0
+                    {here.sounds.size > 0
                       ? 'Adds at the frame you are on. Drag it afterwards.'
                       : 'Drop a .wav or .ogg onto the canvas to bring one in.'}
                   </p>
                   <div className="mt-2 flex flex-col gap-1">
-                    {[...character.motions[tab].sounds.keys()].map((name) => (
+                    {[...here.sounds.keys()].map((name) => (
                       <Button key={name} variant="outline" size="sm"
                               className="w-full justify-start font-mono text-[11px]"
                               onClick={() => {
@@ -1314,7 +1364,7 @@ export default function App() {
                 onFrameDragEnd={onFrameDragEnd}
                 onSfxChange={(i, next) => editSpec((s) => { s.sfx[i] = next; return s })}
                 sfxIndex={sfxIndex}
-                sfxLength={(file) => character.motions[tab].sounds.get(file)?.seconds ?? 0}
+                sfxLength={(file) => here.sounds.get(file)?.seconds ?? 0}
                 onPickSfx={setSfxIndex}
                 onSpace={spaceEvenly}
                 onDuration={(duration) => editSpec((s) => ({ ...s, duration }))}
@@ -1326,14 +1376,89 @@ export default function App() {
       {/* Reached by any character with no sprite motions yet - including a bundle-driven one,
           where there is nothing wrong and nothing missing. Add motion above is the way out of
           both, so this says where it is rather than reporting an absence. */}
-      {character.motions.length === 0 && (
+      {character.motions.length === 0 && character.skills.length === 0 && (
         <p className="mt-4 text-sm text-muted-foreground">
           No sprite motions here yet. <strong>Add motion</strong> creates the first one: it makes
           a <code>motions/&lt;Name&gt;/</code> folder to drop PNGs into. Any bundle in this
           character keeps working either way.
         </p>
       )}
-      </>
+
+      {/* The other half of the same coin. Under the sprite timeline rather than behind a tab of
+          its own, on the axis Timeline and SkillTimeline now share: a phase reads against the
+          frame it fires on. */}
+      {entry && (
+        skillIndex === null ? (
+          // Only for a name the plugin would actually open: it walks MOTION_DETAIL looking for
+          // <name>.json (fs.ts:116-118), so offering to create MyMotion.json offers a file
+          // nothing reads.
+          MOTION_NAMES.includes(entry.base) && (
+            <div className="mt-4 rounded-lg border p-4">
+              <p className="text-sm font-medium">No <code>{entry.base}.json</code> yet.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                That is where this motion's phases, hit checkers and camera work live. Without one
+                the game builds a single coin that hands off at the end of the animation.
+              </p>
+              <Button size="sm" className="mt-3" onClick={() => void createSkillFile(entry.base)}>
+                <Plus className="size-3.5" />
+                Create {entry.base}.json
+              </Button>
+            </div>
+          )
+        ) : doc === null ? (
+          // A file the editor cannot parse is shown, never rewritten. Offering an editor over a
+          // document it failed to read would mean saving a guess over someone's file.
+          <Alert variant="destructive" className="mt-4">
+            <TriangleAlert />
+            <AlertDescription>
+              <p>
+                <strong>{character.skills[skillIndex].name}</strong> could not be read:{' '}
+                {character.skills[skillIndex].error}
+              </p>
+              <p>
+                It is left exactly as it is on disk, and its timings are not editable here. Fix it
+                in a text editor and reopen the character. The sprite frames above are unaffected.
+              </p>
+            </AlertDescription>
+          </Alert>
+        ) : doc.coins[coin] ? (
+          <CoinTimings
+            coin={doc.coins[coin]}
+            duration={durationOf(entry, coin)}
+            warning={character.skills[skillIndex].warning}
+            selected={marker}
+            onSelect={setMarker}
+            onEdit={(patch) => editCoin(skillIndex, coin, patch)}
+            onRemoveCoin={() => {
+              editSkill(skillIndex, (s) => { s.coins.splice(coin, 1); return s })
+              setCoin(Math.max(0, coin - 1))
+              setMarker(null)
+            }}
+          />
+        ) : (
+          <div className="mt-4 rounded-lg border p-4">
+            <p className="text-sm font-medium">
+              No coin {coin + 1} in <code>{character.skills[skillIndex].name}</code>.
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {/* TimelineBuilder emits one timeline per coins[] entry, so art past the end of that
+                  array is never built into anything the game plays. */}
+              The game builds one coin per entry in that file, so nothing here plays until it has
+              a coin {coin + 1}.
+              {coin > doc.coins.length && (
+                ` Adding it also creates coins ${doc.coins.length + 1}-${coin}, since the list cannot have a gap.`
+              )}
+            </p>
+            <Button size="sm" className="mt-3"
+                    onClick={() => {
+                      editSkill(skillIndex, (s) => ({ ...s, coins: withCoin(s.coins, coin) }))
+                      setMarker(null)
+                    }}>
+              <Plus className="size-3.5" />
+              Add coin {coin + 1} to {character.skills[skillIndex].name}
+            </Button>
+          </div>
+        )
       )}
       </div>
 

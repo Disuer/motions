@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DAMAGE_DEFAULTS, ROTATE_DEFAULTS, SHAKE_DEFAULTS, STURN_DEFAULTS, ZOOM_DEFAULTS,
-  clampFraction, newCoin, newPhase, parseSkill, serialiseSkill,
+  clampFraction, newCoin, newPhase, parseSkill, serialiseSkill, withCoin,
 } from './skill'
 
 const skill = (coins: unknown[]) => JSON.stringify({ coins })
@@ -160,5 +160,40 @@ describe('defaults that differ from schema.json', () => {
     expect(SHAKE_DEFAULTS.vibrato).toBe(120)
     expect(STURN_DEFAULTS.sturnType).toBe('KNOCKBACK')
     expect(DAMAGE_DEFAULTS.multiHit).toBe(1)
+  })
+})
+
+describe('withCoin', () => {
+  it('adds the coin asked for when it is the next one', () => {
+    const next = withCoin([newCoin(2)], 1)
+    expect(next).toHaveLength(2)
+    expect(next[0].totalDuration).toBe(2)
+  })
+
+  // An array cannot have a hole, so coins[3] on a one-coin file means creating 1, 2 and 3.
+  it('fills the gap when the coin is past the end', () => {
+    expect(withCoin([newCoin()], 3)).toHaveLength(4)
+    expect(withCoin([], 0)).toHaveLength(1)
+  })
+
+  it('leaves a coin that already exists alone', () => {
+    const coins = [newCoin(2), newCoin(3)]
+    const next = withCoin(coins, 1)
+    expect(next).toHaveLength(2)
+    expect(next[1].totalDuration).toBe(3)
+  })
+
+  // Every coin it creates gets the end-of-coin hit checker newCoin() gives, not the 15% default
+  // that reads as "my animation is cut short" (TimelineBuilder.cs:74-85).
+  it('gives every coin it creates a hit checker at the end', () => {
+    for (const coin of withCoin([], 2)) {
+      expect(coin.hitCheckers).toEqual([{ time: 1, isNextMotionCoinDelay: 0 }])
+    }
+  })
+
+  it('does not mutate the array it was given', () => {
+    const coins = [newCoin()]
+    withCoin(coins, 2)
+    expect(coins).toHaveLength(1)
   })
 })

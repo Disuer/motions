@@ -75,33 +75,42 @@ names you already have are marked and cannot be added twice. Free text works
 too: type anything and the list offers to create it, because the plugin logs a
 warning for a name it does not recognise rather than rejecting it.
 
-### Per-coin animations
+### Coins
 
-A skill can have a different animation per coin, in a `<Skill>_N` folder, the
-same as a bundle. Select a skill and a **Coins** row appears under its tab:
+A skill has coins, and a coin is two files: the animation in
+`motions/<Skill>_N/`, and the phases, hit checkers and camera work in
+`<Skill>.json`. Select a skill and a **Coins** row appears under its tab, over
+everything either file knows about:
 
 ```text
 Idle   S1 3   S2                    [+ Add motion]
-Coins   all coins  coin 1  coin 2   [+ Add coin]
+Coins   coin 1   coin 2   coin 3    [+ Add coin]
 ```
 
-**all coins** is the plain `S1` folder, which every coin falls back to when it
-has no animation of its own, so you only make the ones that actually differ.
-**Add coin** makes the next one, as many as you like; there is no ceiling.
+**Coin 1 is the plain `S1` folder and `coins[0]` of `S1.json`**, coin 2 is
+`S1_1` and `coins[1]`, and so on. The numbering is the game's own: the folder
+suffix counts from the *second* coin, because the bare folder is the first.
+
+`motions/S1/` doubles as the fallback every coin without a folder of its own
+animates with, so you only draw the ones that actually differ.
+
+**A coin missing on one side offers to create it there.** Three coins declared
+in `S1.json` and one folder gives you three tabs, with coins 2 and 3 offering
+to make `motions/S1_1/` and `motions/S1_2/`. Folders past the last coin the
+file declares say so, because the game builds one timeline per entry in that
+array and never reaches the rest.
+
+**Add coin** selects the coin after the last one either file has, and offers to
+create each half. There is no ceiling.
 
 Coins do not appear in **Add motion**, because a coin belongs to a skill and
-this row already knows which. The number beside a tab is how many folders that
-motion has.
+this row already knows which. The number beside a motion tab is how many coins
+it has.
 
-This has nothing to do with `S1.json`. How many coins that file declares is a
-separate question on a separate tab, and it does not limit which animations you
-can draw.
+## Timings
 
-## Skill timings
-
-A character with `S1.json` files beside its bundle gets a second view,
-**Skill timings**, next to the sprite motions. One tab per file, one tab per
-coin inside it, and every array in the schema drawn as a track:
+Under the sprite timeline, on the same axis, is the other half of the coin:
+what `<Motion>.json` says it does. Every array in the schema is a track:
 
 | Track | What it holds |
 |---|---|
@@ -134,12 +143,23 @@ which disagrees with it in three places: `isUpAttack` really defaults to *true*
 once a `damage` object exists, and `focusRotateSpeed` and every camera
 `duration` really default to `0`.
 
-**Add coin** creates one with a hit checker at the very end rather than none,
+A coin created here gets a hit checker at the very end rather than none,
 because a coin with no `hitCheckers` hands off at 15% of its length, which
 shows up much later as an attack that gets cut short.
 
-A file that cannot be parsed is shown as an error and never rewritten. Fix it
-in a text editor and reopen the character.
+**Remove this coin** takes it out of the file. The folder is left alone — the
+editor has no action that deletes one.
+
+**`totalDuration` is a readout, not a setting, whenever the coin has an
+animation behind it.** The game replaces it with that animation's duration, so
+the number the file holds is not what runs. Only a coin with no sprite motion —
+its own folder or the fallback — gets an editable box. That is also why the
+timings ruler reads seconds rather than a fraction when the animation is there:
+0.5 on a 1.2s coin is 0.6s, and the phase sits over the frame it fires on.
+
+A file that cannot be parsed is shown as an error and never rewritten, and its
+sprite frames keep working above it. Fix it in a text editor and reopen the
+character. A motion with no `<Motion>.json` at all offers to create one.
 
 ## The canvas
 
