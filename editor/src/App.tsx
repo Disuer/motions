@@ -385,8 +385,10 @@ export default function App() {
         return
       }
       const loaded = await loadCharacter(handle, mode)
-      await rememberFolder(handle, mode)
+      // Opening the folder is what the user asked for; remembering it for next time is bookkeeping
+      // that must never gate that. rememberFolder no longer throws, but this order stands anyway.
       replaceCharacter(loaded)
+      await rememberFolder(handle, mode)
     } catch (e) {
       setProblem(`Could not open ${handle.name}: ${why(e)}`)
     }

@@ -216,14 +216,22 @@ function db(): Promise<IDBDatabase> {
   })
 }
 
+// Persisting "last opened folder" is a convenience for the Reopen button, not something the user
+// is waiting on. If IndexedDB is unavailable or refuses the write (quota, permissions, enterprise
+// policy), that must never block the folder from opening - so failures are swallowed here rather
+// than thrown. Do not change this back to propagating errors.
 export async function rememberFolder(handle: FileSystemDirectoryHandle, mode: Mode): Promise<void> {
-  const d = await db()
-  await new Promise<void>((resolve, reject) => {
-    const tx = d.transaction(STORE, 'readwrite')
-    tx.objectStore(STORE).put({ handle, mode }, KEY)
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-  })
+  try {
+    const d = await db()
+    await new Promise<void>((resolve, reject) => {
+      const tx = d.transaction(STORE, 'readwrite')
+      tx.objectStore(STORE).put({ handle, mode }, KEY)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  } catch {
+    // ignored - see comment above
+  }
 }
 
 export async function recallFolder(): Promise<{ handle: FileSystemDirectoryHandle; mode: Mode } | null> {
