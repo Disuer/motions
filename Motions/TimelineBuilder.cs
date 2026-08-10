@@ -212,6 +212,8 @@ public static class TimelineBuilder
                     markerType = Il2CppType.Of<SkillGiveTiming_TweenMove_Relative>();
                 else if (phase.type == "GiveDamage")
                     markerType = Il2CppType.Of<SkillGiveTiming_GiveDamage>();
+                else if (phase.type == "ToTarget")
+                    markerType = Il2CppType.Of<SkillGiveTiming_TweenMove_ToTarget>();
                 else
                     continue;
 
@@ -247,6 +249,21 @@ public static class TimelineBuilder
                     {
                         arriveRadius_Vector = moveVec
                     };
+                }
+                else if (phase.type == "ToTarget")
+                {
+                    Logger.LogWarning("entered phasetype.test");
+                    var tween = marker.Cast<SkillGiveTiming_TweenMove_ToTarget>();
+
+                    Vector3 moveVec = phase.move != null
+                        ? phase.move.ToVector3()
+                        : Vector3.zero;
+
+                    tween.moveInfo = new TweenMoveInfo_ToTarget
+                    {
+                        arriveRadius = phase.move != null ? phase.move.x : 0f
+                    };
+
                 }
                 else if (phase.type == "MoveEnemy")
                 {
