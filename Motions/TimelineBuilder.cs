@@ -240,9 +240,29 @@ public static class TimelineBuilder
                         ? phase.move.ToVector3()
                         : Vector3.zero;
 
+                    if (!string.IsNullOrEmpty(phase.easingType) && phase.easingType != "Unset")
+                    {
+                        Ease ease = Ease.Unset;
+                        if (Enum.TryParse<Ease>(phase.easingType, true, out ease))
+                        {
+                            tween.moveInfo.ease = ease;
+                        }
+                    }
+
+                    if (phase.attackerRadius)
+                    {
+                        tween.moveInfo.isInclude_attakcerRadius = true;
+                    }
+
+                    if (phase.targetRadius)
+                    {
+                        tween.moveInfo.isInclude_targetRadius = true;
+                    }
+
                     tween.moveInfo = new TweenMoveInfo_ToTarget
                     {
-                        arriveRadius = phase.move != null ? phase.move.x : 0f
+                        arriveRadius = phase.move != null ? phase.move.x : 0f,
+                        duration = phase.duration != 0.0f ? phase.duration : 0f
                     };
 
                     tween.moveInfo_wide = new TweenMoveInfo_ToTarget_Wide
@@ -252,18 +272,36 @@ public static class TimelineBuilder
                 }
                 else if (phase.type == "ToTarget")
                 {
-                    Logger.LogWarning("entered phasetype.test");
                     var tween = marker.Cast<SkillGiveTiming_TweenMove_ToTarget>();
 
                     Vector3 moveVec = phase.move != null
                         ? phase.move.ToVector3()
                         : Vector3.zero;
 
+                    if (!string.IsNullOrEmpty(phase.easingType) && phase.easingType != "Unset")
+                    {
+                        Ease ease = Ease.Unset;
+                        if (Enum.TryParse<Ease>(phase.easingType, true, out ease))
+                        {
+                            tween.moveInfo.ease = ease;
+                        }
+                    }
+
+                    if (phase.attackerRadius)
+                    {
+                        tween.moveInfo.isInclude_attakcerRadius = true;
+                    }
+
+                    if (phase.targetRadius)
+                    {
+                        tween.moveInfo.isInclude_targetRadius = true;
+                    }
+
                     tween.moveInfo = new TweenMoveInfo_ToTarget
                     {
-                        arriveRadius = phase.move != null ? phase.move.x : 0f
+                        arriveRadius = phase.move != null ? phase.move.x : 0f,
+                        duration = phase.duration != 0.0f ? phase.duration : 0f
                     };
-
                 }
                 else if (phase.type == "MoveEnemy")
                 {

@@ -75,6 +75,10 @@ public class SkillPhase
     public double end;
     public int steps;
     public Vec3Data move;
+    public string easingType = "Unset";
+    public bool attackerRadius;
+    public bool targetRadius;
+    public float duration = 0.0f;
     public bool isRefreshDir;
     public DamageData damage;
     public float damageRatio;
