@@ -190,7 +190,7 @@ public static class TimelineBuilder
         var info = new TweenMoveInfo_ToTarget
         {
             arriveRadius = phase.move != null ? phase.move.x : 0f,
-            duration = phase.duration,
+            duration = phase.duration != 0.0f ? phase.duration : 0.066f,
             isInclude_attakcerRadius = phase.attackerRadius,
             isInclude_targetRadius = phase.targetRadius
         };
