@@ -26,6 +26,26 @@ public class Motions
 
     // ---- Bundle loading / unloading ---------------------------------------
 
+    /// <summary>
+    /// Loads one bundle, or logs why it could not be loaded. Unity identifies a loaded bundle by
+    /// the serialized-file id baked in at build time (CAB-&lt;hash of the AssetBundle NAME&gt;), not by
+    /// file path - so two mods that both built a bundle named "motione" collide and the second
+    /// LoadFromFile silently returns null. Nothing at runtime can rename a CAB; the only fix is a
+    /// unique AssetBundle name at build time, so this at least says so instead of NREing.
+    /// </summary>
+    static AssetBundle LoadBundle(string bundlePath)
+    {
+        var bundle = AssetBundle.LoadFromFile(bundlePath, 0);
+        if (bundle == null)
+            Logger.LogError(
+                $"Could not load '{bundlePath}'. Another loaded mod almost certainly ships an " +
+                "AssetBundle built under the same name. Open that mod's Unity project, give the " +
+                "bundle a unique name (prefix it with the mod, e.g. 'yourmod_ishmael'), and " +
+                "rebuild - renaming the .bundle FILE does not help, the id comes from the name " +
+                "set in the Unity inspector.");
+        return bundle;
+    }
+
     [HarmonyPatch(typeof(GlobalGameManager), nameof(GlobalGameManager.LoadScene))]
     [HarmonyPrefix]
     public static void LoadScene(SCENE_STATE state, DelegateEvent onLoadScene)
@@ -83,13 +103,22 @@ public class Motions
                             {
                                 foreach (var bundlePath in Directory.GetFiles(charDir, "*.bundle", SearchOption.AllDirectories))
                                 {
-                                    var bundle = AssetBundle.LoadFromFile(bundlePath, 0);
-                                    string assetName = bundle.GetName();
+                                    var bundle = LoadBundle(bundlePath);
                                     if (bundle == null)
                                         continue;
 
-                                    if (!MotionData.dashboardAssets.ContainsKey(assetName))
-                                        MotionData.dashboardAssets.Add(assetName, bundle);
+                                    string assetName = bundle.GetName();
+                                    // Dropping a same-named bundle without unloading it leaks it past
+                                    // UnloadAll, and the next battle rejects the file as already loaded.
+                                    if (MotionData.dashboardAssets.ContainsKey(assetName))
+                                    {
+                                        Logger.LogError($"Two dashboard bundles are named '{assetName}'. " +
+                                                        $"Ignoring {bundlePath} - rename one and rebuild.");
+                                        bundle.Unload(false);
+                                        continue;
+                                    }
+
+                                    MotionData.dashboardAssets.Add(assetName, bundle);
                                     Logger.LogWarning($"Loaded bundle {bundle.name} for dashboard");
                                 }
                                 continue;
@@ -98,14 +127,20 @@ public class Motions
                             {
                                 foreach (var bundlePath in Directory.GetFiles(charDir, "*.bundle", SearchOption.AllDirectories))
                                 {
-                                    var bundle = AssetBundle.LoadFromFile(bundlePath, 0);
-                                    string assetName = bundle.GetName();
-                                    assetName = assetName.GetBefore(".bundle");
+                                    var bundle = LoadBundle(bundlePath);
                                     if (bundle == null)
                                         continue;
 
-                                    if (!MotionData.screenBorderAssets.ContainsKey(assetName))
-                                        MotionData.screenBorderAssets.Add(assetName, bundle);
+                                    string assetName = bundle.GetName().GetBefore(".bundle");
+                                    if (MotionData.screenBorderAssets.ContainsKey(assetName))
+                                    {
+                                        Logger.LogError($"Two screen bundles are named '{assetName}'. " +
+                                                        $"Ignoring {bundlePath} - rename one and rebuild.");
+                                        bundle.Unload(false);
+                                        continue;
+                                    }
+
+                                    MotionData.screenBorderAssets.Add(assetName, bundle);
                                     Logger.LogWarning($"Loaded bundle {bundle.name} for screeneffect");
                                 }
                                 continue;
@@ -123,7 +158,7 @@ public class Motions
                                 {
                                     Logger.LogInfo($"Loading bundle for {buffId}: {bundlePath}");
 
-                                    var bundle = AssetBundle.LoadFromFile(bundlePath, 0);
+                                    var bundle = LoadBundle(bundlePath);
                                     if (bundle == null)
                                         continue;
 
@@ -172,7 +207,7 @@ public class Motions
         foreach (var bundlePath in Directory.GetFiles(charDir, "*.bundle", SearchOption.AllDirectories))
         {
             Logger.LogInfo($"Loading bundle for {appearanceID}: {bundlePath}");
-            var bundle = UnityEngine.AssetBundle.LoadFromFile(bundlePath, 0);
+            var bundle = LoadBundle(bundlePath);
             if (bundle != null)
             {
                 if (!MotionData.LoadedAssets.ContainsKey(appearanceID))

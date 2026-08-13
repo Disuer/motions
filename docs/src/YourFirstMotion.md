@@ -63,6 +63,13 @@ This is as simple as right clicking the assets and clicking on "Build AssetBundl
 
 {{#template templates/video.md id=assets/export_base_motion.mp4}}
 
+> **Give your bundle a unique name before building.** In the inspector, set the AssetBundle name to
+> something prefixed with your mod, e.g. `mymotion_yisang` instead of the template's `motion`.
+> Unity identifies a loaded bundle by an id hashed from that name, so if two installed mods both
+> shipped a bundle named `motion`, only the first one loads and the second fails with
+> *"can't be loaded because another AssetBundle with the same files is already loaded"*.
+> Renaming the `.bundle` file afterwards does **not** help - the name has to be unique at build time.
+
 Create a mod folder with the following structure inside the lethe mod folder:
 
 ```
