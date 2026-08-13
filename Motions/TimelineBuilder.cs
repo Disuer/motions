@@ -204,6 +204,29 @@ public static class TimelineBuilder
         return info;
     }
 
+    /// <summary>
+    /// The move info a Relative or MoveEnemy phase asks for. Both types carry ease and duration
+    /// like ToTarget does; nothing here read them until now, so a Relative phase snapped to its
+    /// destination however it was authored. duration 0 is the old behaviour and stays the default.
+    /// </summary>
+    private static TweenMoveInfo_Relative MoveRelative(SkillPhase phase, Vector3 movePos)
+    {
+        var info = new TweenMoveInfo_Relative
+        {
+            movePos = movePos,
+            isRefreshDir = phase.isRefreshDir,
+            duration = phase.duration
+        };
+
+        if (!string.IsNullOrEmpty(phase.easingType) && phase.easingType != "Unset"
+            && Enum.TryParse<Ease>(phase.easingType, true, out Ease ease))
+        {
+            info.ease = ease;
+        }
+
+        return info;
+    }
+
     public static void SetupSkillFromJson(TrackAsset track, CoinData data)
     {
         if (data == null)
@@ -251,15 +274,8 @@ public static class TimelineBuilder
                 if (phase.type == "Relative")
                 {
                     var tween = marker.Cast<SkillGiveTiming_TweenMove_Relative>();
-
-                    tween.moveInfo = new TweenMoveInfo_Relative
-                    {
-                        movePos = phase.move != null
-                            ? phase.move.ToVector3()
-                            : Vector3.zero,
-
-                        isRefreshDir = phase.isRefreshDir
-                    };
+                    tween.moveInfo = MoveRelative(
+                        phase, phase.move != null ? phase.move.ToVector3() : Vector3.zero);
                 }
                 else if (phase.type == "ToTargetWide")
                 {
@@ -290,11 +306,7 @@ public static class TimelineBuilder
                         : Vector3.zero;
 
                     tween.name = "MoveEnemy";
-                    tween.moveInfo = new TweenMoveInfo_Relative
-                    {
-                        movePos = moveVec,
-                        isRefreshDir = phase.isRefreshDir
-                    };
+                    tween.moveInfo = MoveRelative(phase, moveVec);
                 }
                 else if (phase.type == "GiveDamage")
                 {
