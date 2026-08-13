@@ -75,7 +75,11 @@ public static class TimelineBuilder
         {
             for (int i = 0; i < data.hitCheckers.Length; i++)
             {
-                AddHitChecker(track, duration * data.hitCheckers[i].time, false, data.hitCheckers[i].isNextMotionCoinDelay);
+                // time is a fraction of the coin, and nothing validates the JSON: a typo'd 55555 (or a
+                // negative) puts the marker outside the fixed-length timeline, where it never fires and
+                // the coin never hands off. Clamped rather than skipped - a hand-off late is recoverable.
+                double at = duration * Math.Clamp(data.hitCheckers[i].time, 0.0, 1.0);
+                AddHitChecker(track, at, false, data.hitCheckers[i].isNextMotionCoinDelay);
             }
         }
         else
@@ -175,6 +179,31 @@ public static class TimelineBuilder
         }
     }
 
+    /// <summary>
+    /// The move info a ToTarget or ToTargetWide phase asks for. Built in one place because both
+    /// used to set ease and the radius flags on the info object they were about to REPLACE with a
+    /// fresh one, which quietly dropped easingType, attackerRadius and targetRadius from every
+    /// phase ever written. Fields set at construction cannot be lost that way.
+    /// </summary>
+    private static TweenMoveInfo_ToTarget MoveToTarget(SkillPhase phase)
+    {
+        var info = new TweenMoveInfo_ToTarget
+        {
+            arriveRadius = phase.move != null ? phase.move.x : 0f,
+            duration = phase.duration,
+            isInclude_attakcerRadius = phase.attackerRadius,
+            isInclude_targetRadius = phase.targetRadius
+        };
+
+        if (!string.IsNullOrEmpty(phase.easingType) && phase.easingType != "Unset"
+            && Enum.TryParse<Ease>(phase.easingType, true, out Ease ease))
+        {
+            info.ease = ease;
+        }
+
+        return info;
+    }
+
     public static void SetupSkillFromJson(TrackAsset track, CoinData data)
     {
         if (data == null)
@@ -240,30 +269,7 @@ public static class TimelineBuilder
                         ? phase.move.ToVector3()
                         : Vector3.zero;
 
-                    if (!string.IsNullOrEmpty(phase.easingType) && phase.easingType != "Unset")
-                    {
-                        Ease ease = Ease.Unset;
-                        if (Enum.TryParse<Ease>(phase.easingType, true, out ease))
-                        {
-                            tween.moveInfo.ease = ease;
-                        }
-                    }
-
-                    if (phase.attackerRadius)
-                    {
-                        tween.moveInfo.isInclude_attakcerRadius = true;
-                    }
-
-                    if (phase.targetRadius)
-                    {
-                        tween.moveInfo.isInclude_targetRadius = true;
-                    }
-
-                    tween.moveInfo = new TweenMoveInfo_ToTarget
-                    {
-                        arriveRadius = phase.move != null ? phase.move.x : 0f,
-                        duration = phase.duration != 0.0f ? phase.duration : 0f
-                    };
+                    tween.moveInfo = MoveToTarget(phase);
 
                     tween.moveInfo_wide = new TweenMoveInfo_ToTarget_Wide
                     {
@@ -273,35 +279,7 @@ public static class TimelineBuilder
                 else if (phase.type == "ToTarget")
                 {
                     var tween = marker.Cast<SkillGiveTiming_TweenMove_ToTarget>();
-
-                    Vector3 moveVec = phase.move != null
-                        ? phase.move.ToVector3()
-                        : Vector3.zero;
-
-                    if (!string.IsNullOrEmpty(phase.easingType) && phase.easingType != "Unset")
-                    {
-                        Ease ease = Ease.Unset;
-                        if (Enum.TryParse<Ease>(phase.easingType, true, out ease))
-                        {
-                            tween.moveInfo.ease = ease;
-                        }
-                    }
-
-                    if (phase.attackerRadius)
-                    {
-                        tween.moveInfo.isInclude_attakcerRadius = true;
-                    }
-
-                    if (phase.targetRadius)
-                    {
-                        tween.moveInfo.isInclude_targetRadius = true;
-                    }
-
-                    tween.moveInfo = new TweenMoveInfo_ToTarget
-                    {
-                        arriveRadius = phase.move != null ? phase.move.x : 0f,
-                        duration = phase.duration != 0.0f ? phase.duration : 0f
-                    };
+                    tween.moveInfo = MoveToTarget(phase);
                 }
                 else if (phase.type == "MoveEnemy")
                 {
