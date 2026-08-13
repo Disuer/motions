@@ -422,13 +422,16 @@ public static class TimelineBuilder
         {
             var coinData = data.coins[coinIdx];
 
-            double targetDuration = coinData.totalDuration;
-            if (bundleTimeline != null)
-                targetDuration = bundleTimeline.duration;
+            // How long the animation itself runs, used only when the JSON declines to say.
+            double sourceDuration = bundleTimeline != null ? bundleTimeline.duration : coinData.totalDuration;
 
-            // A sprite motion is what actually plays, so its length wins over both.
+            // A sprite motion is what actually plays, so its length wins over the bundle's.
             if (coinDurations != null && coinIdx < coinDurations.Length && coinDurations[coinIdx].HasValue)
-                targetDuration = coinDurations[coinIdx].Value;
+                sourceDuration = coinDurations[coinIdx].Value;
+
+
+            double targetDuration = coinData.totalDuration > 0 ? coinData.totalDuration : sourceDuration;
+            coinData.totalDuration = targetDuration;
 
             TimelineAsset dummyTimeline = ScriptableObject.CreateInstance<TimelineAsset>();
             dummyTimeline.name = $"{NamePrefix}{timelineName}_Var{variantIndex}_Coin_{coinIdx}";

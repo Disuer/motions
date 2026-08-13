@@ -40,6 +40,11 @@ One object per coin, in order. A coin's object is:
 | `shakes` | array | Camera shakes. |
 | `vfx` | array of int | Reuse the character's original VFX tracks, 1-indexed. See [Bundles](Bundles.md). |
 
+`totalDuration` decides the coin's length even when the animation is a different
+length. Set it longer than your bundle timeline or sprite motion and the last frame
+holds until the coin ends; set it shorter and the animation is cut off there. Omit it
+(or leave it `0`) and the coin takes the animation's own length instead.
+
 ## phases
 
 ```json
