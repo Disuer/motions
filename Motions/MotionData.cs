@@ -13,6 +13,8 @@ namespace Motions;
 /// </summary>
 public static class MotionData
 {
+    public static readonly Dictionary<string, AssetBundle> produceAssets = new();
+
     // --- Bundles from Dashboard -------------------------------------------
 
     public static readonly Dictionary<string, AssetBundle> DashboardAssets = new();

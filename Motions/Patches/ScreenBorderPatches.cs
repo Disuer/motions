@@ -12,7 +12,6 @@ namespace Motions
     public class ScreenBorderPatches
     {
         private const string ScriptPrefix = "Screenborder_";
-
         /// <summary>The stage script's bundle name, or NoBundle when this stage asked for none.</summary>
         private const string NoBundle = "hi";
 

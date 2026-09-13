@@ -141,6 +141,12 @@ public class Motions
             return true;
         }
 
+        if (charDir.Contains("PRODUCE"))
+        {
+            LoadNamedBundles(charDir, MotionData.produceAssets, "produce", trimExtension: true);
+            return true;
+        }
+
         if (charDir.Contains("MOTIONBUFF_"))
         {
             LoadBuffBundles(charDir);
