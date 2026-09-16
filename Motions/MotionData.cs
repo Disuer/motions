@@ -13,14 +13,16 @@ namespace Motions;
 /// </summary>
 public static class MotionData
 {
+    public static readonly Dictionary<string, AssetBundle> produceAssets = new();
+
     // --- Bundles from Dashboard -------------------------------------------
 
-    public static readonly Dictionary<string, AssetBundle> dashboardAssets = new();
-    public static readonly Dictionary<string, GameObject> createdDashboardAssets = new();
+    public static readonly Dictionary<string, AssetBundle> DashboardAssets = new();
+    public static readonly Dictionary<string, GameObject> CreatedDashboardAssets = new();
 
     // --- Bundles from ScreenEffect -------------------------------------------
 
-    public static readonly Dictionary<string,AssetBundle> screenBorderAssets = new();
+    public static readonly Dictionary<string,AssetBundle> ScreenBorderAssets = new();
 
     // --- Bundles from BuffEffect -------------------------------------------
 
@@ -39,6 +41,14 @@ public static class MotionData
 
     /// <summary>Appearances with at least one sprite motion, so the gates can ask without scanning.</summary>
     public static readonly HashSet<string> SpriteMotionAppearances = new();
+
+    // ---- Props ------------------------------------------------------------
+
+    /// <summary>"appearanceID/folder" -> the prop's loaded frames. Shared by every instance.</summary>
+    public static readonly Dictionary<string, SpriteMotion> PropArt = new();
+
+    /// <summary>appearanceID -> its validated prop entries.</summary>
+    public static readonly Dictionary<string, PropEntry[]> Props = new();
 
     /// <summary>Empty fixed-length timelines that exist only to give the slave director a clock.</summary>
     public static readonly Dictionary<MotionKey, TimelineAsset> ClockTimelines = new();
@@ -79,14 +89,9 @@ public static class MotionData
 
     // ---- Queries ---------------------------------------------------------
 
-    public static List<AssetBundle> GetAssetBundlesFromAppearance(string appearanceID)
-    {
-        if (LoadedAssets.ContainsKey(appearanceID))
-        {
-            return LoadedAssets[appearanceID];
-        }
-        return null;
-    }
+    /// <summary>Named for the same "...ForAppearance" family as FindTimelineForAppearance.</summary>
+    public static List<AssetBundle> GetBundlesForAppearance(string appearanceID)
+        => LoadedAssets.TryGetValue(appearanceID, out var bundles) ? bundles : null;
 
     public static bool HasDefinition(string appearanceID)
         => CustomMotionDefinitions.ContainsKey(appearanceID);
@@ -96,6 +101,12 @@ public static class MotionData
 
     public static bool HasSpriteMotion(string appearanceID)
         => SpriteMotionAppearances.Contains(appearanceID);
+
+    public static bool HasProps(string appearanceID)
+        => Props.ContainsKey(appearanceID);
+
+    public static PropEntry[] GetProps(string appearanceID)
+        => Props.TryGetValue(appearanceID, out var entries) ? entries : null;
 
     /// <summary>
     /// Sprite motion for this coin, falling back to the motion's first coin when there is no
@@ -115,8 +126,6 @@ public static class MotionData
         motion = null;
         return false;
     }
-
-    public static bool HasBundleBuff(string buffID) => LoadedAssets.ContainsKey(buffID);
 
     public static string GetDefinitionPath(string appearanceID, MOTION_DETAIL detail)
     {
@@ -194,7 +203,7 @@ public static class MotionData
 
     public static GameObject FindPrefabAssetDashboard(string bundleName)
     {
-        if (!dashboardAssets.TryGetValue(bundleName, out var bundle))
+        if (!DashboardAssets.TryGetValue(bundleName, out var bundle))
             return null;
 
             foreach (var assetName in bundle.AllAssetNames())
@@ -287,6 +296,25 @@ public static class MotionData
 
     // ---- Lifecycle --------------------------------------------------------
 
+    /// <summary>
+    /// Destroys one motion's runtime-created sprites and textures. They carry
+    /// HideFlags.HideAndDontSave, so Unity will never collect them and every battle
+    /// transition would leak the whole set. Shared by sprite motions and props because
+    /// both build their assets the same way.
+    /// </summary>
+    private static void DestroyRuntimeAssets(SpriteMotion motion)
+    {
+        if (motion == null) return;
+
+        if (motion.Sprites != null)
+            foreach (var sprite in motion.Sprites)
+                if (sprite != null) UnityEngine.Object.Destroy(sprite);
+
+        if (motion.Textures != null)
+            foreach (var tex in motion.Textures)
+                if (tex != null) UnityEngine.Object.Destroy(tex);
+    }
+
     public static void UnloadAll()
     {
         foreach (var bundles in LoadedAssets.Values)
@@ -307,43 +335,34 @@ public static class MotionData
                 bundle.Unload(false);
             }
         }
-        foreach (var bundle in screenBorderAssets.Values)
+        foreach (var bundle in ScreenBorderAssets.Values)
         {
             if (bundle == null) continue;
-            Logger.LogWarning($"Unloading buff bundle {bundle.name}");
+            Logger.LogWarning($"Unloading screen border bundle {bundle.name}");
             bundle.Unload(false);
         }
-        foreach (var bundle in dashboardAssets.Values)
+        foreach (var bundle in DashboardAssets.Values)
         {
             if (bundle == null) continue;
-            Logger.LogWarning($"Unloading buff bundle {bundle.name}");
+            Logger.LogWarning($"Unloading dashboard bundle {bundle.name}");
             bundle.Unload(false);
         }
-        // Runtime-created sprites and textures have no bundle to unload them, and they carry
-        // HideFlags.HideAndDontSave so Unity will never collect them either. Without this every
-        // battle transition leaks the whole sprite set.
         foreach (var motion in SpriteMotions.Values)
-        {
-            if (motion == null) continue;
+            DestroyRuntimeAssets(motion);
 
-            if (motion.Sprites != null)
-                foreach (var sprite in motion.Sprites)
-                    if (sprite != null) UnityEngine.Object.Destroy(sprite);
-
-            if (motion.Textures != null)
-                foreach (var tex in motion.Textures)
-                    if (tex != null) UnityEngine.Object.Destroy(tex);
-        }
+        foreach (var art in PropArt.Values)
+            DestroyRuntimeAssets(art);
 
         foreach (var clock in ClockTimelines.Values)
             if (clock != null) UnityEngine.Object.Destroy(clock);
 
         Logger.LogWarning("Unloading and clearing all custom motions and bundles.");
+        PropWorld.Clear();
         LoadedAssets.Clear();
         ScreenBorderPatches.Unload();
-        screenBorderAssets.Clear();
+        ScreenBorderAssets.Clear();
         LoadedBuffAssets.Clear();
-        dashboardAssets.Clear();
+        DashboardAssets.Clear();
         AppearanceVFXCache.Clear();
         AppearanceVFXPrefabs.Clear();
         CustomMotionDefinitions.Clear();
@@ -354,6 +373,8 @@ public static class MotionData
         ProcessedTimelines.Clear();
         SpriteMotions.Clear();
         SpriteMotionAppearances.Clear();
+        PropArt.Clear();
+        Props.Clear();
         ClockTimelines.Clear();
         CustomAppearanceBases.Clear();
     }
