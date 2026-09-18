@@ -1,5 +1,6 @@
 ﻿using HarmonyLib;
 using Il2CppInterop.Runtime;
+using Lethe.EnumInjections;
 using Lethe.Patches;
 using System;
 using System.IO;
