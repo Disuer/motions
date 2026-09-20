@@ -13,3 +13,7 @@ By the end of this guide, you will be able to create and override motions and bu
 {{#template templates/video.md id=assets/anims_finished.webm}}
 
 Let's get started by heading over to [Setting Up](SettingUp.md).
+
+# Custom Video Guide
+
+A mostly comprehensive video guide of the content provided. If you prefer to watch videos instead, head over [here](https://www.youtube.com/watch?v=6F-mYMeOqCs).
